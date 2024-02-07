@@ -1,0 +1,6 @@
+/Cargo.lock
+/target
+/.idea
+/hello_release
+/hello_debug
+!src

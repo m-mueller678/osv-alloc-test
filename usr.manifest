@@ -1,0 +1,2 @@
+/debug: ${MODULE_DIR}/hello_release
+/release: ${MODULE_DIR}/hello_release
