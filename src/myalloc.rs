@@ -88,7 +88,6 @@ unsafe impl TestAlloc for LocalData {
         self.global.available_frames.lock().unwrap().extend(
             Page::range_inclusive(min_page, max_page)
                 .filter_map(|p| self.global.mapped_pages.decrement(p))
-                .inspect(|f| {}),
         );
     }
 }

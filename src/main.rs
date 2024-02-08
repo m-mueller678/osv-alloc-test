@@ -3,20 +3,16 @@ use rand::distributions::Uniform;
 use rand::prelude::*;
 use rand::rngs::SmallRng;
 use std::alloc::{GlobalAlloc, Layout};
-
 use std::collections::VecDeque;
 use std::mem::{align_of, size_of, MaybeUninit};
 use std::ops::Range;
-
 use std::ptr;
 use std::sync::Barrier;
 use std::thread::scope;
 use std::time::Instant;
 use tikv_jemallocator::Jemalloc;
 use x86_64::registers::control::Cr3;
-
 use crate::myalloc::LocalData;
-use x86_64::instructions::interrupts::int3;
 use x86_64::structures::paging::page::PageRange;
 use x86_64::structures::paging::{
     FrameAllocator, Mapper, OffsetPageTable, Page, PageSize, PageTable, PhysFrame, Size2MiB,
@@ -156,11 +152,11 @@ fn main() {
     }
 
     let test_mode = AllocTestMode::First;
-    let threads = 1;
-    let phys_size = 300 * MB;
+    let threads = 8;
+    let phys_size = 2 * GB;
     let max_use = phys_size - phys_size / 4;
-    let avg_alloc_size = 300 * KB;
-    let alloc_per_thread = 10_000;
+    let avg_alloc_size = 64 * KB;
+    let alloc_per_thread = 10_000_000;
 
     for alloc in allocs {
         println!("{alloc}:");

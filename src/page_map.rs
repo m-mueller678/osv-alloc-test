@@ -1,10 +1,9 @@
-use std::collections::BTreeMap;
 use ahash::RandomState;
 use static_assertions::const_assert;
+use std::collections::BTreeMap;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::Mutex;
-
 use x86_64::structures::paging::{Page, PhysFrame, Size2MiB};
 use x86_64::PhysAddr;
 
@@ -51,8 +50,10 @@ impl PageMap {
     pub fn decrement(&self, page: Page<Size2MiB>) -> Option<PhysFrame<Size2MiB>> {
         const_assert!(PAGE_SHIFT == 0);
         const_assert!(COUNT_SHIFT + COUNT_BITS == 64);
-        #[cfg(feature = "page_map_debug")] let mut lock = self.lock.lock().unwrap();
-        #[cfg(feature = "page_map_debug")] let debug = &mut lock.get_mut(&page).unwrap();
+        #[cfg(feature = "page_map_debug")]
+        let mut lock = self.lock.lock().unwrap();
+        #[cfg(feature = "page_map_debug")]
+        let debug = &mut lock.get_mut(&page).unwrap();
         let page_i = page - self.base_page;
         let mut i = self.target_slot(page_i);
         loop {
@@ -71,7 +72,8 @@ impl PageMap {
                 } else {
                     None
                 };
-                #[cfg(feature = "page_map_debug")]{
+                #[cfg(feature = "page_map_debug")]
+                {
                     debug.1 -= 1;
                     if debug.1 == 0 {
                         lock.remove(&page);
@@ -86,8 +88,9 @@ impl PageMap {
 
     pub fn insert(&self, page: Page<Size2MiB>, frame: PhysFrame<Size2MiB>, count: usize) -> usize {
         #[cfg(feature = "page_map_debug")]
-            let mut lock = self.lock.lock().unwrap();
-        #[cfg(feature = "page_map_debug")]{
+        let mut lock = self.lock.lock().unwrap();
+        #[cfg(feature = "page_map_debug")]
+        {
             assert!(lock.insert(page, (frame, count as u64)).is_none());
         }
         const_assert!(COUNT_SHIFT + COUNT_BITS == 64);
@@ -101,7 +104,7 @@ impl PageMap {
         let mut i = self.target_slot(page);
         loop {
             let x = self.slots[i].load(Relaxed);
-            if x >> COUNT_BITS == 0 {
+            if x >> COUNT_SHIFT == 0 {
                 if self.slots[i]
                     .compare_exchange(x, record, Relaxed, Relaxed)
                     .is_ok()
@@ -119,17 +122,18 @@ impl PageMap {
     pub fn increment_at(&self, index: usize, page: Page<Size2MiB>) {
         const_assert!(PAGE_SHIFT == 0);
         #[cfg(feature = "page_map_debug")]
-            let mut lock = self.lock.lock().unwrap();
+        let mut lock = self.lock.lock().unwrap();
         #[cfg(feature = "page_map_debug")]
-            let old_debug_count = {
+        let old_debug_count = {
             let x = &mut lock.get_mut(&page).unwrap().1;
             *x += 1;
             *x - 1
         };
         let old = self.slots[index].fetch_add(1 << COUNT_SHIFT, Relaxed);
-        #[cfg(feature = "page_map_debug")]{
-            assert_eq!(old_debug_count, old >> crate::page_map::COUNT_SHIFT);
-            assert_eq!(page - self.base_page, old & crate::page_map::mask(crate::page_map::PAGE_BITS));
+        #[cfg(feature = "page_map_debug")]
+        {
+            assert_eq!(old_debug_count, old >> COUNT_SHIFT);
+            assert_eq!(page - self.base_page, old & mask(PAGE_BITS));
         }
     }
 
