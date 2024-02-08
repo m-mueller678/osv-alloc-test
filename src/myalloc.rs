@@ -1,6 +1,9 @@
+use crate::buddymap::BuddyTower;
 use crate::page_map::PageMap;
 use crate::paging::{allocate_l2_tables, map_huge_page};
 use crate::{alloc_mmap, page_table, MmapFrameAllocator, TestAlloc, PHYS_OFFSET};
+use rand::rngs::SmallRng;
+use rand::SeedableRng;
 use std::alloc::Layout;
 use std::ptr;
 use std::sync::{Arc, Mutex};
@@ -8,9 +11,12 @@ use x86_64::structures::paging::mapper::UnmapError;
 use x86_64::structures::paging::{Mapper, Page, PageSize, PhysFrame, Size2MiB};
 use x86_64::VirtAddr;
 
+const VIRTUAL_QUANTUM_BITS: u32 = 30;
+
 struct GlobalData {
     mapped_pages: PageMap,
     available_frames: Mutex<Vec<PhysFrame<Size2MiB>>>,
+    virtual_quanta: BuddyTower<{ 48 - VIRTUAL_QUANTUM_BITS as usize }>,
 }
 
 impl GlobalData {
@@ -147,7 +153,25 @@ impl LocalData {
             }
         }
         println!("unmapping complete");
-        dbg!(virt_pages.end - virt_pages.start, virt_pages);
+        let virt_quantum_start =
+            ((virt_pages.start.start_address().as_u64() - 1) >> VIRTUAL_QUANTUM_BITS) as u32 + 1;
+        let virt_quantum_end =
+            (virt_pages.end.start_address().as_u64() >> VIRTUAL_QUANTUM_BITS) as u32;
+
+        let virtual_quanta = BuddyTower::from_range(virt_quantum_start..virt_quantum_end);
+        virtual_quanta.print_counts();
+        let mut range = 0..0;
+        while let Some(x) = virtual_quanta.remove(0, &mut SmallRng::seed_from_u64(0)) {
+            if range.end == x {
+                range.end = range.end + 1
+            } else {
+                dbg!(&range);
+                range.start = x;
+                range.end = x + 1;
+            }
+        }
+        dbg!(&range);
+
         let global = Arc::new(GlobalData {
             mapped_pages: PageMap::new(
                 phys_pages.count() + phys_pages.count() / 4,
@@ -159,6 +183,7 @@ impl LocalData {
                     .map(|p| unsafe { page_table() }.translate_page(p).unwrap())
                     .collect(),
             ),
+            virtual_quanta,
         });
 
         let ret = (0..threads)

@@ -1,8 +1,10 @@
 use rand::Rng;
 use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
+use std::ops::Range;
 use std::sync::Mutex;
 
+#[derive(Default)]
 pub struct BuddyMap {
     pairs: Mutex<BTreeMap<u32, bool>>,
 }
@@ -58,5 +60,27 @@ impl<const H: usize> BuddyTower<H> {
             }
         }
         None
+    }
+
+    pub fn from_range(range: Range<u32>) -> Self {
+        let ret = BuddyTower {
+            maps: (0..H)
+                .map(|_| BuddyMap::default())
+                .collect::<Vec<_>>()
+                .try_into()
+                .map_err(|_| ())
+                .unwrap(),
+        };
+        for x in range {
+            ret.insert(0, x);
+        }
+        ret
+    }
+
+    pub fn print_counts(&self) {
+        for (i, l) in self.maps.iter().enumerate() {
+            print!("{i:2}:{:4}, ", l.pairs.lock().unwrap().len())
+        }
+        println!();
     }
 }
