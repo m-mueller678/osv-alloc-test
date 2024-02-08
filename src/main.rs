@@ -1,4 +1,3 @@
-
 use libc::*;
 use rand::distributions::Uniform;
 use rand::prelude::*;
@@ -13,6 +12,7 @@ use std::time::Instant;
 use tikv_jemallocator::Jemalloc;
 use x86_64::registers::control::Cr3;
 
+use crate::paging::allocate_l2_tables;
 use x86_64::structures::paging::mapper::UnmapError;
 use x86_64::structures::paging::page::PageRange;
 use x86_64::structures::paging::{
@@ -20,12 +20,11 @@ use x86_64::structures::paging::{
     Size2MiB, Size4KiB,
 };
 use x86_64::{PhysAddr, VirtAddr};
-use crate::paging::allocate_l2_tables;
 
-pub mod page_map;
 pub mod myalloc;
-pub mod paging;
 pub mod no_frame_allocator;
+pub mod page_map;
+pub mod paging;
 
 // from osv/libs/mman.cc
 const MAP_UNINITIALIZED: i32 = 0x4000000;
@@ -69,7 +68,7 @@ const VIRT_SIZE: usize = 2 * TB;
 const PHYS_SIZE: usize = 2 * GB;
 
 #[derive(Default)]
-struct MmapFrameAllocator {
+pub struct MmapFrameAllocator {
     frames: Vec<PhysFrame>,
 }
 
@@ -129,11 +128,14 @@ impl PagingAllocator {
                 p.start_address().as_mut_ptr::<u8>().write(0);
             }
         }
-        let mut frame_allocator=MmapFrameAllocator::default();
+        let mut frame_allocator = MmapFrameAllocator::default();
 
         let virt_pages = alloc_mmap::<Size2MiB>(VIRT_SIZE / HUGE_PAGE_SIZE, false);
-        unsafe{
-            allocate_l2_tables(Page::range_inclusive(virt_pages.start,virt_pages.end-1),&mut frame_allocator);
+        unsafe {
+            allocate_l2_tables(
+                Page::range_inclusive(virt_pages.start, virt_pages.end - 1),
+                &mut frame_allocator,
+            );
         }
 
         println!("mmap done");
@@ -190,13 +192,13 @@ unsafe impl TestAlloc for LibCAlloc {
     }
 }
 
-unsafe impl TestAlloc for Jemalloc{
+unsafe impl TestAlloc for Jemalloc {
     unsafe fn alloc(&mut self, layout: Layout) -> *mut u8 {
-        GlobalAlloc::alloc(self,layout)
+        GlobalAlloc::alloc(self, layout)
     }
 
     unsafe fn dealloc(&mut self, ptr: *mut u8, layout: Layout) {
-        GlobalAlloc::dealloc(self,ptr,layout)
+        GlobalAlloc::dealloc(self, ptr, layout)
     }
 }
 
@@ -297,27 +299,23 @@ fn pin() {
 }
 
 fn main() {
-    let kernel_version=std::fs::read("/proc/version").unwrap_or_default();
+    let kernel_version = std::fs::read("/proc/version").unwrap_or_default();
     let kernel_version = String::from_utf8_lossy(&kernel_version);
     println!("/proc/version: {kernel_version:?}");
     pin();
-    let mut allocs:Vec<String> = std::env::args().skip(1).collect();
-    if allocs.is_empty(){
-        allocs=vec!["libc".into(),"jemalloc".into(),"ours".into()]
+    let mut allocs: Vec<String> = std::env::args().skip(1).collect();
+    if allocs.is_empty() {
+        allocs = vec!["libc".into(), "jemalloc".into(), "ours".into()]
     }
-    for alloc in allocs{
+    for alloc in allocs {
         println!("{alloc}:");
-        match alloc.as_str(){
-            "ours"=>{
-                test_alloc::<true, false>(10_000_000, 64 * KB, 2 * GB,&mut PagingAllocator::new());
+        match alloc.as_str() {
+            "ours" => {
+                test_alloc::<true, false>(10_000_000, 64 * KB, 2 * GB, &mut PagingAllocator::new());
             }
-            "jemalloc"=>{
-                test_alloc::<true, false>(10_000_000, 64 * KB, 2 * GB,&mut Jemalloc)
-            }
-            "libc"=>{
-                test_alloc::<true, false>(10_000_000, 64 * KB, 2 * GB,&mut LibCAlloc)
-            }
-            _=>panic!("bad allocator name: {alloc}"),
+            "jemalloc" => test_alloc::<true, false>(10_000_000, 64 * KB, 2 * GB, &mut Jemalloc),
+            "libc" => test_alloc::<true, false>(10_000_000, 64 * KB, 2 * GB, &mut LibCAlloc),
+            _ => panic!("bad allocator name: {alloc}"),
         }
     }
 }

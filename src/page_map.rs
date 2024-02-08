@@ -1,12 +1,10 @@
-
-
-use std::sync::atomic::AtomicU64;
-use std::sync::atomic::Ordering::Relaxed;
 use ahash::RandomState;
 use static_assertions::const_assert;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering::Relaxed;
 
-use x86_64::PhysAddr;
 use x86_64::structures::paging::{Page, PhysFrame, Size2MiB};
+use x86_64::PhysAddr;
 
 const FRAME_BITS: u32 = 20;
 const COUNT_BITS: u32 = 16;
@@ -34,13 +32,13 @@ fn check_width(val: u64, bits: u32) {
 }
 
 impl PageMap {
-    pub fn with_num_slots(mut s:usize,base_page:Page<Size2MiB>)->Self{
-        s=s.next_power_of_two();
-        PageMap{
+    pub fn with_num_slots(mut s: usize, base_page: Page<Size2MiB>) -> Self {
+        s = s.next_power_of_two();
+        PageMap {
             base_page,
-            slot_index_mask:s-1,
-            slots:(0..s).map(|_|AtomicU64::new(0)).collect(),
-            random_state:RandomState::with_seed(0xee61096f95490820),
+            slot_index_mask: s - 1,
+            slots: (0..s).map(|_| AtomicU64::new(0)).collect(),
+            random_state: RandomState::with_seed(0xee61096f95490820),
         }
     }
 
@@ -65,12 +63,7 @@ impl PageMap {
         }
     }
 
-    pub fn insert(
-        &self,
-        page: Page<Size2MiB>,
-        frame: PhysFrame<Size2MiB>,
-        count: usize,
-    ) ->usize {
+    pub fn insert(&self, page: Page<Size2MiB>, frame: PhysFrame<Size2MiB>, count: usize) -> usize {
         const_assert!(COUNT_SHIFT + COUNT_BITS == 64);
         let page = page - self.base_page;
         let frame = frame.start_address().as_u64() >> 21;
@@ -83,7 +76,10 @@ impl PageMap {
         loop {
             let x = self.slots[i].load(Relaxed);
             if x >> COUNT_BITS == 0 {
-                if self.slots[i].compare_exchange(x, record, Relaxed, Relaxed).is_ok() {
+                if self.slots[i]
+                    .compare_exchange(x, record, Relaxed, Relaxed)
+                    .is_ok()
+                {
                     return i;
                 } else {
                     continue;
@@ -94,9 +90,9 @@ impl PageMap {
         }
     }
 
-    pub fn increment_at(&self,index:usize,page:Page<Size2MiB>){
-        let old = self.slots[index].fetch_add(1<<COUNT_BITS,Relaxed);
-        debug_assert!(page-self.base_page == old&mask(PAGE_BITS));
+    pub fn increment_at(&self, index: usize, page: Page<Size2MiB>) {
+        let old = self.slots[index].fetch_add(1 << COUNT_BITS, Relaxed);
+        debug_assert!(page - self.base_page == old & mask(PAGE_BITS));
     }
 
     fn target_slot(&self, page: u64) -> usize {
