@@ -21,10 +21,10 @@ pub struct PageMap {
     random_state: ahash::RandomState,
 }
 
-pub const MAX_ALLOCS_PER_PAGE: usize = 1 << COUNT_BITS - 1;
+pub const MAX_ALLOCS_PER_PAGE: usize = 1 << (COUNT_BITS - 1);
 
 fn mask(bits: u32) -> u64 {
-    1u64 << bits - 1
+    1u64 << (bits - 1)
 }
 
 fn check_width(val: u64, bits: u32) {
@@ -52,7 +52,7 @@ impl PageMap {
             if (found >> COUNT_SHIFT) != 0 && (found & mask(PAGE_BITS)) == target_page {
                 let old_val = self.slots[i].fetch_sub(1 << COUNT_SHIFT, Relaxed);
                 return if old_val >> COUNT_SHIFT == 1 {
-                    let frame = old_val >> FRAME_SHIFT & (1 << FRAME_BITS - 1);
+                    let frame = old_val >> FRAME_SHIFT & (1 << (FRAME_BITS - 1));
                     Some(PhysFrame::from_start_address(PhysAddr::new(frame << 21)).unwrap())
                 } else {
                     None

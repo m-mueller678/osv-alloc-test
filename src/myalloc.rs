@@ -1,6 +1,6 @@
 use crate::page_map::PageMap;
 use crate::paging::allocate_l2_tables;
-use crate::{alloc_mmap, page_table, MmapFrameAllocator, PHYS_OFFSET};
+use crate::{alloc_mmap, page_table, MmapFrameAllocator, PHYS_OFFSET, TestAlloc};
 use std::alloc::Layout;
 use std::ptr;
 use std::sync::{Arc, Mutex};
@@ -23,20 +23,8 @@ pub struct LocalData {
     global: Arc<GlobalData>,
 }
 
-impl LocalData {
-    fn get_frames(&mut self, count: usize) -> Result<(), ()> {
-        assert!(self.available_frames.is_empty());
-        let mut gf = self.global.available_frames.lock().unwrap();
-        if gf.len() < count {
-            return Err(());
-        }
-        let new_len = gf.len() - count;
-        self.available_frames.extend_from_slice(&gf[new_len..]);
-        gf.truncate(new_len);
-        Ok(())
-    }
-
-    pub fn alloc(&mut self, layout: Layout) -> *mut u8 {
+unsafe impl TestAlloc for LocalData{
+    unsafe fn alloc(&mut self, layout: Layout) -> *mut u8 {
         if layout.size() == 0 {
             return VirtAddr::new(PHYS_OFFSET).as_mut_ptr();
         }
@@ -82,7 +70,7 @@ impl LocalData {
         self.bump.as_mut_ptr()
     }
 
-    pub fn dealloc(&mut self, ptr: *mut u8, layout: Layout) {
+    unsafe fn dealloc(&mut self, ptr: *mut u8, layout: Layout) {
         debug_assert!(self.available_frames.is_empty());
         if layout.size() == 0 {
             return;
@@ -96,6 +84,22 @@ impl LocalData {
                 .filter_map(|p| self.global.mapped_pages.decrement(p)),
         );
     }
+
+}
+
+impl LocalData {
+    fn get_frames(&mut self, count: usize) -> Result<(), ()> {
+        assert!(self.available_frames.is_empty());
+        let mut gf = self.global.available_frames.lock().unwrap();
+        if gf.len() < count {
+            return Err(());
+        }
+        let new_len = gf.len() - count;
+        self.available_frames.extend_from_slice(&gf[new_len..]);
+        gf.truncate(new_len);
+        Ok(())
+    }
+
 
     pub fn create(
         threads: usize,

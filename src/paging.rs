@@ -16,7 +16,7 @@ pub unsafe fn allocate_l2_tables(
     let l4 = VirtAddr::new(l4_frame.start_address().as_u64() + PHYS_OFFSET)
         .as_mut_ptr::<PageTableEntry>();
     for i4 in usize::from(range.start.p4_index())..=usize::from(range.end.p4_index()) {
-        let l4_entry = ensure_present(l4.add(i4.into()), frame_allocator);
+        let l4_entry = ensure_present(l4.add(i4), frame_allocator);
         assert!(l4_entry.flags().contains(PageTableFlags::PRESENT));
         let l3 = VirtAddr::new(
             l4_entry.frame().unwrap_unchecked().start_address().as_u64() + PHYS_OFFSET,
@@ -34,7 +34,7 @@ pub unsafe fn allocate_l2_tables(
         };
         for i3 in i3_start..=i3_end {
             if l3.add(i3).read().is_unused() {
-                ensure_present(l3.add(i3.into()), frame_allocator);
+                ensure_present(l3.add(i3), frame_allocator);
             }
         }
     }
