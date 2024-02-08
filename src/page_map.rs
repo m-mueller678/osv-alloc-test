@@ -2,6 +2,7 @@
 
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering::Relaxed;
+use ahash::RandomState;
 use static_assertions::const_assert;
 
 use x86_64::PhysAddr;
@@ -33,7 +34,17 @@ fn check_width(val: u64, bits: u32) {
 }
 
 impl PageMap {
-    pub fn decrement_and_remove_0(&self, page: Page<Size2MiB>) -> Option<PhysFrame<Size2MiB>> {
+    pub fn with_num_slots(mut s:usize,base_page:Page<Size2MiB>)->Self{
+        s=s.next_power_of_two();
+        PageMap{
+            base_page,
+            slot_index_mask:s-1,
+            slots:(0..s).map(|_|AtomicU64::new(0)).collect(),
+            random_state:RandomState::with_seed(0xee61096f95490820),
+        }
+    }
+
+    pub fn decrement(&self, page: Page<Size2MiB>) -> Option<PhysFrame<Size2MiB>> {
         const_assert!(PAGE_SHIFT == 0);
         const_assert!(COUNT_SHIFT + COUNT_BITS == 64);
         let target_page = page - self.base_page;
@@ -59,7 +70,7 @@ impl PageMap {
         page: Page<Size2MiB>,
         frame: PhysFrame<Size2MiB>,
         count: usize,
-    ) {
+    ) ->usize {
         const_assert!(COUNT_SHIFT + COUNT_BITS == 64);
         let page = page - self.base_page;
         let frame = frame.start_address().as_u64() >> 21;
@@ -73,7 +84,7 @@ impl PageMap {
             let x = self.slots[i].load(Relaxed);
             if x >> COUNT_BITS == 0 {
                 if self.slots[i].compare_exchange(x, record, Relaxed, Relaxed).is_ok() {
-                    break;
+                    return i;
                 } else {
                     continue;
                 }
@@ -81,6 +92,11 @@ impl PageMap {
                 i = (i + 1) & self.slot_index_mask;
             }
         }
+    }
+
+    pub fn increment_at(&self,index:usize,page:Page<Size2MiB>){
+        let old = self.slots[index].fetch_add(1<<COUNT_BITS,Relaxed);
+        debug_assert!(page-self.base_page == old&mask(PAGE_BITS));
     }
 
     fn target_slot(&self, page: u64) -> usize {
