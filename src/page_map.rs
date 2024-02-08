@@ -1,10 +1,11 @@
-use ahash::AHasher;
-use modular_bitfield::prelude::*;
+
+
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering::Relaxed;
-use std::thread::yield_now;
+use static_assertions::const_assert;
+
 use x86_64::PhysAddr;
-use x86_64::structures::paging::{Page, PageSize, PhysFrame, Size2MiB};
+use x86_64::structures::paging::{Page, PhysFrame, Size2MiB};
 
 const FRAME_BITS: u32 = 20;
 const COUNT_BITS: u32 = 16;
@@ -14,14 +15,14 @@ const PAGE_SHIFT: u32 = 0;
 const FRAME_SHIFT: u32 = PAGE_BITS;
 const COUNT_SHIFT: u32 = FRAME_SHIFT + FRAME_BITS;
 
-struct PageMap {
+pub struct PageMap {
     base_page: Page<Size2MiB>,
     slot_index_mask: usize,
     slots: Vec<AtomicU64>,
     random_state: ahash::RandomState,
 }
 
-const MAX_ALLOCS_PER_PAGE: usize = 1 << COUNT_BITS - 1;
+pub const MAX_ALLOCS_PER_PAGE: usize = 1 << COUNT_BITS - 1;
 
 fn mask(bits: u32) -> u64 {
     1u64 << bits - 1
@@ -33,8 +34,8 @@ fn check_width(val: u64, bits: u32) {
 
 impl PageMap {
     pub fn decrement_and_remove_0(&self, page: Page<Size2MiB>) -> Option<PhysFrame<Size2MiB>> {
-        assert!(PAGE_SHIFT == 0);
-        assert!(COUNT_SHIFT + COUNT_BITS == 64);
+        const_assert!(PAGE_SHIFT == 0);
+        const_assert!(COUNT_SHIFT + COUNT_BITS == 64);
         let target_page = page - self.base_page;
         let mut i = self.target_slot(target_page);
         loop {
@@ -59,7 +60,7 @@ impl PageMap {
         frame: PhysFrame<Size2MiB>,
         count: usize,
     ) {
-        assert!(COUNT_SHIFT + COUNT_BITS == 64);
+        const_assert!(COUNT_SHIFT + COUNT_BITS == 64);
         let page = page - self.base_page;
         let frame = frame.start_address().as_u64() >> 21;
         let count = count as u64;

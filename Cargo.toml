@@ -12,3 +12,4 @@ rand = {version = "0.8.5",features = ["small_rng"]}
 ahash = { version = "0.8.7" ,default-features = false}
 modular-bitfield = "0.11.2"
 tikv-jemallocator ="0.5.4"
+static_assertions = "1.1.0"

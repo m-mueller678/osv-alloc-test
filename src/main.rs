@@ -1,18 +1,18 @@
-use ahash::RandomState;
+
 use libc::*;
 use rand::distributions::Uniform;
 use rand::prelude::*;
 use rand::rngs::SmallRng;
 use std::alloc::{GlobalAlloc, Layout};
 use std::collections::hash_map::Entry;
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::mem::{align_of, replace, size_of, MaybeUninit};
-use std::ops::Add;
+
 use std::ptr;
 use std::time::Instant;
 use tikv_jemallocator::Jemalloc;
 use x86_64::registers::control::Cr3;
-use x86_64::structures::idt::ExceptionVector::Virtualization;
+
 use x86_64::structures::paging::mapper::UnmapError;
 use x86_64::structures::paging::page::PageRange;
 use x86_64::structures::paging::{
@@ -21,7 +21,7 @@ use x86_64::structures::paging::{
 };
 use x86_64::{PhysAddr, VirtAddr};
 
-mod PageMap;
+pub mod page_map;
 
 // from osv/libs/mman.cc
 const MAP_UNINITIALIZED: i32 = 0x4000000;
@@ -61,7 +61,7 @@ fn phys_to_virt(p: PhysAddr) -> VirtAddr {
 
 const HUGE_PAGE_SIZE: usize = 2 * MB;
 
-const VIRT_SIZE: usize = 1 * TB;
+const VIRT_SIZE: usize = 2 * TB;
 const PHYS_SIZE: usize = 2 * GB;
 
 #[derive(Default)]
@@ -130,7 +130,7 @@ impl PagingAllocator {
         println!("mmap done");
         println!("unmapping virtual range pages");
         {
-            let mut pt = unsafe { page_table() };
+            let _pt = unsafe { page_table() };
             for p in virt_pages {
                 match unsafe { page_table() }.unmap(p) {
                     Ok((f, flush)) => {
@@ -176,7 +176,7 @@ unsafe impl TestAlloc for LibCAlloc {
         malloc(layout.size()) as *mut u8
     }
 
-    unsafe fn dealloc(&mut self, ptr: *mut u8, layout: Layout) {
+    unsafe fn dealloc(&mut self, ptr: *mut u8, _layout: Layout) {
         free(ptr as *mut c_void)
     }
 }
