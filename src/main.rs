@@ -290,12 +290,19 @@ fn pin() {
 fn main() {
     pin();
     unsafe {
-        println!("ours:");
-        test_alloc::<true, false>(10_000_000, 64 * KB, 2 * GB, &mut PagingAllocator::new());
-        println!("libc malloc:");
-        test_alloc::<true, false>(10_000_000, 64 * KB, 2 * GB, &mut LibCAlloc);
-        println!("jemalloc:");
-        test_alloc::<true, false>(10_000_000, 64 * KB, 2 * GB, &mut Jemalloc);
+        let kernel_version=std::fs::read("/proc/version").unwrap_or_default();
+        let kernel_version = String::from_utf8_lossy(&kernel_version);
+        println!("/proc/version: {kernel_version:?}");
+        if kernel_version.is_empty(){
+            println!("ours:");
+            test_alloc::<true, false>(10_000_000, 64 * KB, 2 * GB, &mut PagingAllocator::new());
+        }
+        for _ in 0..10{
+            println!("jemalloc:");
+            test_alloc::<true, false>(10_000_000, 64 * KB, 2 * GB, &mut Jemalloc);
+            println!("libc malloc:");
+            test_alloc::<true, false>(10_000_000, 64 * KB, 2 * GB, &mut LibCAlloc);
+        }
     }
 }
 
@@ -316,6 +323,7 @@ fn test_alloc<const VALIDATE: bool, const VALIDATE_FULL: bool>(
         avg_alloc_size - avg_alloc_size / 4,
         avg_alloc_size + avg_alloc_size / 4,
     );
+
     fn layout(l: usize) -> Layout {
         Layout::from_size_align(l * size_of::<usize>(), align_of::<usize>()).unwrap()
     }
