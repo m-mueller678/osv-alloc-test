@@ -25,6 +25,7 @@ use crate::paging::allocate_l2_tables;
 pub mod page_map;
 pub mod myalloc;
 pub mod paging;
+pub mod no_frame_allocator;
 
 // from osv/libs/mman.cc
 const MAP_UNINITIALIZED: i32 = 0x4000000;
