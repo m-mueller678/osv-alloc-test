@@ -1,2 +1,2 @@
-/debug: ${MODULE_DIR}/hello_release
+/debug: ${MODULE_DIR}/hello_debug
 /release: ${MODULE_DIR}/hello_release

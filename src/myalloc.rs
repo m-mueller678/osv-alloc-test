@@ -1,6 +1,6 @@
 use crate::page_map::PageMap;
-use crate::paging::allocate_l2_tables;
-use crate::{alloc_mmap, page_table, MmapFrameAllocator, PHYS_OFFSET, TestAlloc};
+use crate::paging::{allocate_l2_tables, map_huge_page};
+use crate::{alloc_mmap, page_table, MmapFrameAllocator, TestAlloc, PHYS_OFFSET};
 use std::alloc::Layout;
 use std::ptr;
 use std::sync::{Arc, Mutex};
@@ -13,6 +13,18 @@ struct GlobalData {
     available_frames: Mutex<Vec<PhysFrame<Size2MiB>>>,
 }
 
+impl GlobalData {
+    unsafe fn map_and_insert(
+        &self,
+        page: Page<Size2MiB>,
+        frame: PhysFrame<Size2MiB>,
+        count: usize,
+    ) -> usize {
+        map_huge_page(page, frame);
+        self.mapped_pages.insert(page, frame, count)
+    }
+}
+
 #[derive(Clone)]
 pub struct LocalData {
     available_frames: Vec<PhysFrame<Size2MiB>>,
@@ -23,7 +35,7 @@ pub struct LocalData {
     global: Arc<GlobalData>,
 }
 
-unsafe impl TestAlloc for LocalData{
+unsafe impl TestAlloc for LocalData {
     unsafe fn alloc(&mut self, layout: Layout) -> *mut u8 {
         if layout.size() == 0 {
             return VirtAddr::new(PHYS_OFFSET).as_mut_ptr();
@@ -40,6 +52,7 @@ unsafe impl TestAlloc for LocalData{
             let max_page = Page::<Size2MiB>::containing_address(aligned_bump - 1u64);
             let required_frames = self.current_page - min_page;
             if self.get_frames(required_frames as usize).is_err() {
+                eprintln!("out of memory");
                 return ptr::null_mut();
             }
             if self.current_page == max_page {
@@ -53,14 +66,12 @@ unsafe impl TestAlloc for LocalData{
             }
             for p in Page::range(min_page, self.current_page).skip(1) {
                 self.global
-                    .mapped_pages
-                    .insert(p, self.available_frames.pop().unwrap(), 1);
+                    .map_and_insert(p, self.available_frames.pop().unwrap(), 1);
             }
             self.current_page = min_page;
             self.current_page_index =
                 self.global
-                    .mapped_pages
-                    .insert(min_page, self.available_frames.pop().unwrap(), 2);
+                    .map_and_insert(min_page, self.available_frames.pop().unwrap(), 2);
             if let Some(p) = freed_frame {
                 self.global.available_frames.lock().unwrap().push(p);
             }
@@ -81,10 +92,12 @@ unsafe impl TestAlloc for LocalData{
             Page::<Size2MiB>::containing_address(start_addr + layout.size() as u64 - 1u64);
         self.global.available_frames.lock().unwrap().extend(
             Page::range_inclusive(min_page, max_page)
-                .filter_map(|p| self.global.mapped_pages.decrement(p)),
+                .filter_map(|p| self.global.mapped_pages.decrement(p))
+                .inspect(|f| {
+                    eprintln!("reclaim {f:?}");
+                }),
         );
     }
-
 }
 
 impl LocalData {
@@ -99,7 +112,6 @@ impl LocalData {
         gf.truncate(new_len);
         Ok(())
     }
-
 
     pub fn create(
         threads: usize,
@@ -143,6 +155,7 @@ impl LocalData {
             }
         }
         println!("unmapping complete");
+        dbg!(virt_pages.end - virt_pages.start, virt_pages);
         let global = Arc::new(GlobalData {
             mapped_pages: PageMap::with_num_slots(
                 phys_pages.count() + phys_pages.count() / 4,
@@ -164,11 +177,13 @@ impl LocalData {
                     min_address: (virt_pages.start + i as u64 * pages_per_thread as u64)
                         .start_address(),
                     bump: end_page.start_address(),
-                    current_page_index: global.mapped_pages.insert(
-                        end_page - 1,
-                        global.available_frames.lock().unwrap().pop().unwrap(),
-                        1,
-                    ),
+                    current_page_index: unsafe {
+                        global.map_and_insert(
+                            end_page - 1,
+                            global.available_frames.lock().unwrap().pop().unwrap(),
+                            1,
+                        )
+                    },
                     current_page: end_page - 1,
                     global: global.clone(),
                 }

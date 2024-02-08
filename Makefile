@@ -1,5 +1,5 @@
 .PHONY: module FORCE
-module: hello_release
+module: hello_release hello_debug
 
 hello_release: FORCE
 	cargo build --release

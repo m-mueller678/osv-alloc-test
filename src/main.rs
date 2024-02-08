@@ -4,7 +4,7 @@ use rand::prelude::*;
 use rand::rngs::SmallRng;
 use std::alloc::{GlobalAlloc, Layout};
 
-use std::collections::{VecDeque};
+use std::collections::VecDeque;
 use std::mem::{align_of, size_of, MaybeUninit};
 use std::ops::Range;
 
@@ -15,15 +15,14 @@ use std::time::Instant;
 use tikv_jemallocator::Jemalloc;
 use x86_64::registers::control::Cr3;
 
-
-
+use crate::myalloc::LocalData;
+use x86_64::instructions::interrupts::int3;
 use x86_64::structures::paging::page::PageRange;
 use x86_64::structures::paging::{
-    FrameAllocator, Mapper, OffsetPageTable, Page, PageSize, PageTable, PhysFrame,
-    Size2MiB, Size4KiB,
+    FrameAllocator, Mapper, OffsetPageTable, Page, PageSize, PageTable, PhysFrame, Size2MiB,
+    Size4KiB,
 };
 use x86_64::{PhysAddr, VirtAddr};
-use crate::myalloc::LocalData;
 
 pub mod myalloc;
 pub mod no_frame_allocator;
@@ -66,7 +65,6 @@ fn phys_to_virt(p: PhysAddr) -> VirtAddr {
     VirtAddr::new(PHYS_OFFSET + p.as_u64())
 }
 
-
 #[derive(Default)]
 pub struct MmapFrameAllocator {
     frames: Vec<PhysFrame>,
@@ -93,9 +91,9 @@ unsafe impl FrameAllocator<Size4KiB> for MmapFrameAllocator {
     }
 }
 
-fn claim_frames<P: PageSize>(count: usize) -> impl Iterator<Item=PhysFrame<P>>
-    where
-            for<'a> OffsetPageTable<'a>: Mapper<P>,
+fn claim_frames<P: PageSize>(count: usize) -> impl Iterator<Item = PhysFrame<P>>
+where
+    for<'a> OffsetPageTable<'a>: Mapper<P>,
 {
     alloc_mmap::<P>(count, false).into_iter().map(|page| {
         unsafe {
@@ -105,7 +103,7 @@ fn claim_frames<P: PageSize>(count: usize) -> impl Iterator<Item=PhysFrame<P>>
     })
 }
 
-unsafe trait TestAlloc :Send {
+unsafe trait TestAlloc: Send {
     unsafe fn alloc(&mut self, layout: Layout) -> *mut u8;
     unsafe fn dealloc(&mut self, ptr: *mut u8, layout: Layout);
 }
@@ -133,7 +131,6 @@ unsafe impl TestAlloc for Jemalloc {
     }
 }
 
-
 fn pin() {
     unsafe {
         let mut cpu_set = MaybeUninit::<libc::cpu_set_t>::zeroed().assume_init();
@@ -157,24 +154,51 @@ fn main() {
     if allocs.is_empty() {
         allocs = vec!["libc".into(), "jemalloc".into(), "ours".into()]
     }
-    let test_mode=AllocTestMode::Full;
-    let threads=8;
+
+    let test_mode = AllocTestMode::First;
+    let threads = 1;
+    let phys_size = 300 * MB;
+    let max_use = phys_size - phys_size / 4;
+    let avg_alloc_size = 3 * KB;
+    let alloc_per_thread = 10_000;
 
     for alloc in allocs {
         println!("{alloc}:");
         match alloc.as_str() {
             "ours" => {
-                test_alloc(10_000_000, 64 * KB, 2 * GB,test_mode, &mut LocalData::create(8,2*GB,TB));
+                test_alloc(
+                    alloc_per_thread,
+                    avg_alloc_size,
+                    max_use,
+                    test_mode,
+                    &mut LocalData::create(threads, phys_size, TB),
+                );
             }
-            "jemalloc" => test_alloc(10_000_000, 64 * KB, 2 * GB,test_mode, &mut vec![Jemalloc;threads]),
-            "libc" => test_alloc(10_000_000, 64 * KB, 2 * GB, test_mode,&mut vec![LibCAlloc;threads]),
+            "jemalloc" => test_alloc(
+                alloc_per_thread,
+                avg_alloc_size,
+                max_use,
+                test_mode,
+                &mut vec![Jemalloc; threads],
+            ),
+            "libc" => test_alloc(
+                alloc_per_thread,
+                avg_alloc_size,
+                max_use,
+                test_mode,
+                &mut vec![LibCAlloc; threads],
+            ),
             _ => panic!("bad allocator name: {alloc}"),
         }
     }
 }
 
-#[derive(Clone,Copy)]
-enum AllocTestMode { None, First, Full }
+#[derive(Clone, Copy)]
+enum AllocTestMode {
+    None,
+    First,
+    Full,
+}
 
 impl AllocTestMode {
     fn index_range(self, size: usize) -> Range<usize> {
@@ -198,6 +222,8 @@ fn test_alloc<A: TestAlloc>(
     }
 
     assert_eq!(avg_alloc_size % 8, 0);
+    let concurrent_allocs_per_thread =
+        max_concurrent_size / (avg_alloc_size + avg_alloc_size / 4) / allocs.len();
     let avg_alloc_size = avg_alloc_size / 8;
     let size_range = Uniform::new(
         avg_alloc_size - avg_alloc_size / 4,
@@ -205,7 +231,6 @@ fn test_alloc<A: TestAlloc>(
     );
 
     let barrier = &Barrier::new(allocs.len() + 1);
-    let concurrent_allocs_per_thread = max_concurrent_size / (avg_alloc_size + avg_alloc_size / 4) / allocs.len();
 
     let duration = scope(|s| {
         for (tid, a) in allocs.iter_mut().enumerate() {
@@ -215,9 +240,15 @@ fn test_alloc<A: TestAlloc>(
                 let mut next_id = (tid * allocs_per_thread) << 16;
 
                 unsafe {
-                    while allocs.len() < max_concurrent_size {
+                    while allocs.len() < concurrent_allocs_per_thread {
+                        if allocs.len() >= 102500 {
+                            dbg!(allocs.len() * avg_alloc_size * 8);
+                        }
                         let size = size_range.sample(&mut rng);
                         let ptr = a.alloc(layout(size)) as *mut usize;
+                        if allocs.len() >= 102500 {
+                            dbg!(ptr);
+                        }
                         for i in mode.index_range(size) {
                             ptr.add(i).write(next_id + i);
                         }
@@ -231,7 +262,7 @@ fn test_alloc<A: TestAlloc>(
                     for _ in 0..allocs_per_thread {
                         {
                             let (ptr, size) = allocs.pop_front().unwrap();
-                            let expected_id = (next_id - concurrent_allocs_per_thread) << 16;
+                            let expected_id = next_id - (concurrent_allocs_per_thread << 16);
                             for i in mode.index_range(size) {
                                 assert_eq!(ptr.add(i).read(), expected_id + i);
                             }
@@ -251,8 +282,8 @@ fn test_alloc<A: TestAlloc>(
                     barrier.wait();
 
                     while let Some((ptr, size)) = allocs.pop_front() {
-                        let expected_id = (next_id - concurrent_allocs_per_thread) << 16;
-                        for i in 0..size {
+                        let expected_id = next_id - (concurrent_allocs_per_thread << 16);
+                        for i in mode.index_range(size) {
                             assert_eq!(ptr.add(i).read(), expected_id + i);
                         }
                         a.dealloc(ptr as *mut u8, layout(size));

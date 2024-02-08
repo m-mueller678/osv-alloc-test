@@ -2,6 +2,7 @@ use ahash::RandomState;
 use static_assertions::const_assert;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering::Relaxed;
+use std::sync::Mutex;
 
 use x86_64::structures::paging::{Page, PhysFrame, Size2MiB};
 use x86_64::PhysAddr;
@@ -19,12 +20,14 @@ pub struct PageMap {
     slot_index_mask: usize,
     slots: Vec<AtomicU64>,
     random_state: ahash::RandomState,
+    #[cfg(debug_assertions)]
+    lock: Mutex<()>,
 }
 
 pub const MAX_ALLOCS_PER_PAGE: usize = 1 << (COUNT_BITS - 1);
 
 fn mask(bits: u32) -> u64 {
-    1u64 << (bits - 1)
+    (1u64 << bits) - 1
 }
 
 fn check_width(val: u64, bits: u32) {
@@ -39,17 +42,22 @@ impl PageMap {
             slot_index_mask: s - 1,
             slots: (0..s).map(|_| AtomicU64::new(0)).collect(),
             random_state: RandomState::with_seed(0xee61096f95490820),
+            #[cfg(debug_assertions)]
+            lock: Mutex::new(()),
         }
     }
 
     pub fn decrement(&self, page: Page<Size2MiB>) -> Option<PhysFrame<Size2MiB>> {
+        #[cfg(debug_assertions)]
+        let _g = self.lock.lock().unwrap();
+
         const_assert!(PAGE_SHIFT == 0);
         const_assert!(COUNT_SHIFT + COUNT_BITS == 64);
-        let target_page = page - self.base_page;
-        let mut i = self.target_slot(target_page);
+        let page = page - self.base_page;
+        let mut i = self.target_slot(page);
         loop {
             let found = self.slots[i].load(Relaxed);
-            if (found >> COUNT_SHIFT) != 0 && (found & mask(PAGE_BITS)) == target_page {
+            if (found >> COUNT_SHIFT) != 0 && (found & mask(PAGE_BITS)) == page {
                 let old_val = self.slots[i].fetch_sub(1 << COUNT_SHIFT, Relaxed);
                 return if old_val >> COUNT_SHIFT == 1 {
                     let frame = old_val >> FRAME_SHIFT & (1 << (FRAME_BITS - 1));
@@ -64,6 +72,9 @@ impl PageMap {
     }
 
     pub fn insert(&self, page: Page<Size2MiB>, frame: PhysFrame<Size2MiB>, count: usize) -> usize {
+        #[cfg(debug_assertions)]
+        let _g = self.lock.lock().unwrap();
+
         const_assert!(COUNT_SHIFT + COUNT_BITS == 64);
         let page = page - self.base_page;
         let frame = frame.start_address().as_u64() >> 21;
@@ -91,7 +102,11 @@ impl PageMap {
     }
 
     pub fn increment_at(&self, index: usize, page: Page<Size2MiB>) {
-        let old = self.slots[index].fetch_add(1 << COUNT_BITS, Relaxed);
+        #[cfg(debug_assertions)]
+        let _g = self.lock.lock().unwrap();
+
+        const_assert!(PAGE_SHIFT == 0);
+        let old = self.slots[index].fetch_add(1 << COUNT_SHIFT, Relaxed);
         debug_assert!(page - self.base_page == old & mask(PAGE_BITS));
     }
 
