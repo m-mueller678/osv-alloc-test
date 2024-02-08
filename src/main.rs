@@ -10,6 +10,7 @@ use std::mem::{align_of, replace, size_of, MaybeUninit};
 use std::ops::Add;
 use std::ptr;
 use std::time::Instant;
+use tikv_jemallocator::Jemalloc;
 use x86_64::registers::control::Cr3;
 use x86_64::structures::idt::ExceptionVector::Virtualization;
 use x86_64::structures::paging::mapper::UnmapError;
@@ -168,15 +169,25 @@ unsafe trait TestAlloc {
     unsafe fn dealloc(&mut self, ptr: *mut u8, layout: Layout);
 }
 
-struct OsvAlloc;
+struct LibCAlloc;
 
-unsafe impl TestAlloc for OsvAlloc {
+unsafe impl TestAlloc for LibCAlloc {
     unsafe fn alloc(&mut self, layout: Layout) -> *mut u8 {
         malloc(layout.size()) as *mut u8
     }
 
     unsafe fn dealloc(&mut self, ptr: *mut u8, layout: Layout) {
         free(ptr as *mut c_void)
+    }
+}
+
+unsafe impl TestAlloc for Jemalloc{
+    unsafe fn alloc(&mut self, layout: Layout) -> *mut u8 {
+        GlobalAlloc::alloc(self,layout)
+    }
+
+    unsafe fn dealloc(&mut self, ptr: *mut u8, layout: Layout) {
+        GlobalAlloc::dealloc(self,ptr,layout)
     }
 }
 
@@ -282,7 +293,9 @@ fn main() {
         println!("ours:");
         test_alloc::<true, false>(10_000_000, 64 * KB, 2 * GB, &mut PagingAllocator::new());
         println!("libc malloc:");
-        test_alloc::<true, false>(10_000_000, 64 * KB, 2 * GB, &mut OsvAlloc);
+        test_alloc::<true, false>(10_000_000, 64 * KB, 2 * GB, &mut LibCAlloc);
+        println!("jemalloc:");
+        test_alloc::<true, false>(10_000_000, 64 * KB, 2 * GB, &mut Jemalloc);
     }
 }
 

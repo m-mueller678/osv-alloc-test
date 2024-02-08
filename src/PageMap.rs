@@ -6,28 +6,13 @@ use std::thread::yield_now;
 use x86_64::PhysAddr;
 use x86_64::structures::paging::{Page, PageSize, PhysFrame, Size2MiB};
 
-const FRAME_BITS: u32 = 19;
+const FRAME_BITS: u32 = 20;
 const COUNT_BITS: u32 = 16;
-const PAGE_BITS: u32 = 63 - COUNT_BITS - FRAME_BITS;
+const PAGE_BITS: u32 = 64 - COUNT_BITS - FRAME_BITS;
 
 const PAGE_SHIFT: u32 = 0;
 const FRAME_SHIFT: u32 = PAGE_BITS;
 const COUNT_SHIFT: u32 = FRAME_SHIFT + FRAME_BITS;
-
-impl PageRecord {
-    fn lock(mut self) -> Self {
-        self.set_is_locked(true);
-        self
-    }
-
-    fn to_u64(self) -> u64 {
-        u64::from_ne_bytes(self.into_bytes())
-    }
-
-    fn from_u64(x: u64) -> Self {
-        Self::from_bytes(x.to_ne_bytes())
-    }
-}
 
 struct PageMap {
     base_page: Page<Size2MiB>,
@@ -53,7 +38,7 @@ impl PageMap {
         let target_page = page - self.base_page;
         let mut i = self.target_slot(target_page);
         loop {
-            let found = self.load(i);
+            let found = self.slots[i].load(Relaxed);
             if (found >> COUNT_SHIFT) != 0 && (found & mask(PAGE_BITS)) == target_page {
                 let old_val = self.slots[i].fetch_sub(1 << COUNT_SHIFT, Relaxed);
                 return if old_val >> COUNT_SHIFT == 1 {
