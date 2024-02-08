@@ -288,20 +288,27 @@ fn pin() {
 }
 
 fn main() {
+    let kernel_version=std::fs::read("/proc/version").unwrap_or_default();
+    let kernel_version = String::from_utf8_lossy(&kernel_version);
+    println!("/proc/version: {kernel_version:?}");
     pin();
-    unsafe {
-        let kernel_version=std::fs::read("/proc/version").unwrap_or_default();
-        let kernel_version = String::from_utf8_lossy(&kernel_version);
-        println!("/proc/version: {kernel_version:?}");
-        if kernel_version.is_empty(){
-            println!("ours:");
-            test_alloc::<true, false>(10_000_000, 64 * KB, 2 * GB, &mut PagingAllocator::new());
-        }
-        for _ in 0..10{
-            println!("jemalloc:");
-            test_alloc::<true, false>(10_000_000, 64 * KB, 2 * GB, &mut Jemalloc);
-            println!("libc malloc:");
-            test_alloc::<true, false>(10_000_000, 64 * KB, 2 * GB, &mut LibCAlloc);
+    let mut allocs:Vec<String> = std::env::args().skip(1).collect();
+    if allocs.is_empty(){
+        allocs=vec!["libc".into(),"jemalloc".into(),"ours".into()]
+    }
+    for alloc in allocs{
+        println!("{alloc}:");
+        match alloc.as_str(){
+            "ours"=>{
+                test_alloc::<true, false>(10_000_000, 64 * KB, 2 * GB,&mut PagingAllocator::new());
+            }
+            "jemalloc"=>{
+                test_alloc::<true, false>(10_000_000, 64 * KB, 2 * GB,&mut Jemalloc)
+            }
+            "libc"=>{
+                test_alloc::<true, false>(10_000_000, 64 * KB, 2 * GB,&mut LibCAlloc)
+            }
+            _=>panic!("bad allocator name: {alloc}"),
         }
     }
 }
