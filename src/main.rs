@@ -20,6 +20,7 @@ use x86_64::structures::paging::{
 };
 use x86_64::{PhysAddr, VirtAddr};
 
+pub mod buddymap;
 pub mod myalloc;
 pub mod no_frame_allocator;
 pub mod page_map;
