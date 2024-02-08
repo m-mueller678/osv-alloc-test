@@ -38,33 +38,32 @@ struct PageMap {
 
 const MAX_ALLOCS_PER_PAGE: usize = 1 << COUNT_BITS - 1;
 
-fn mask(bits:u32)->u64{
-    1u64<<bits -1
+fn mask(bits: u32) -> u64 {
+    1u64 << bits - 1
 }
 
-fn check_width(val:u64,bits:u32){
-    debug_assert!( val | mask(bits) ==mask(bits) );
+fn check_width(val: u64, bits: u32) {
+    debug_assert!(val | mask(bits) == mask(bits));
 }
 
 impl PageMap {
     pub fn decrement_and_remove_0(&self, page: Page<Size2MiB>) -> Option<PhysFrame<Size2MiB>> {
-        assert!(PAGE_SHIFT==0);
-        assert!(COUNT_SHIFT+COUNT_BITS==64);
-        let target_page=page - self.base_page;
-        let mut target_slot = self.target_slot(target_page);
-        let mut scan_slot = target_slot;
+        assert!(PAGE_SHIFT == 0);
+        assert!(COUNT_SHIFT + COUNT_BITS == 64);
+        let target_page = page - self.base_page;
+        let mut i = self.target_slot(target_page);
         loop {
-            let found = self.load(scan_slot);
-            if (found>>COUNT_SHIFT)!=0 && (found & mask(PAGE_BITS)) == target_page{
-                let old_val = self.slots[scan_slot].fetch_sub(1<<COUNT_SHIFT,Relaxed);
+            let found = self.load(i);
+            if (found >> COUNT_SHIFT) != 0 && (found & mask(PAGE_BITS)) == target_page {
+                let old_val = self.slots[i].fetch_sub(1 << COUNT_SHIFT, Relaxed);
                 return if old_val >> COUNT_SHIFT == 1 {
                     let frame = old_val >> FRAME_SHIFT & (1 << FRAME_BITS - 1);
                     Some(PhysFrame::from_start_address(PhysAddr::new(frame << 21)).unwrap())
                 } else {
                     None
-                }
-            }else{
-                scan_slot= (scan_slot+1)&self.slot_index_mask;
+                };
+            } else {
+                i = (i + 1) & self.slot_index_mask;
             }
         }
     }
@@ -74,87 +73,31 @@ impl PageMap {
         page: Page<Size2MiB>,
         frame: PhysFrame<Size2MiB>,
         count: usize,
-    ){
-        assert!(COUNT_SHIFT+COUNT_BITS==64);
-        let page = page-self.base_page;
-        let frame = frame.start_address().as_u64()>>21;
-        let count=count as u64;
-        check_width(page,PAGE_BITS);
-        check_width(frame,FRAME_BITS);
-        check_width(count,COUNT_BITS);
-        let record = page<<PAGE_SHIFT | frame<<FRAME_SHIFT | count<<COUNT_SHIFT;
-        let mut target_slot = self.target_slot(page);
+    ) {
+        assert!(COUNT_SHIFT + COUNT_BITS == 64);
+        let page = page - self.base_page;
+        let frame = frame.start_address().as_u64() >> 21;
+        let count = count as u64;
+        check_width(page, PAGE_BITS);
+        check_width(frame, FRAME_BITS);
+        check_width(count, COUNT_BITS);
+        let record = page << PAGE_SHIFT | frame << FRAME_SHIFT | count << COUNT_SHIFT;
+        let mut i = self.target_slot(page);
         loop {
-            let x=self.slots[target_slot].load(Relaxed);
-            if
-            let Ok(update_result):Result<_,()> = self.update(target_slot, |p| {
-                if p.count() == 0 {
-                    Ok((to_insert, None))
+            let x = self.slots[i].load(Relaxed);
+            if x >> COUNT_BITS == 0 {
+                if self.slots[i].compare_exchange(x, record, Relaxed, Relaxed).is_ok() {
+                    break;
                 } else {
-                    let other_target_slot = self.target_slot(p);
-                    if self.psl(target_slot, scan_slot) < self.psl(other_target_slot, scan_slot) {
-                        Ok((p.lock(), Some((target_slot, to_insert))))
-                    } else {
-                        Ok((to_insert.lock(), Some((other_target_slot, p))))
-                    }
+                    continue;
                 }
-            }) else {
-                unreachable!()
-            };
-            if let Some((new_target, new_record)) = update_result {
-                target_slot = new_target;
-                to_insert = new_record;
-                scan_slot += 1;
-            }else{
-                break;
+            } else {
+                i = (i + 1) & self.slot_index_mask;
             }
-        }
-        for i in first_target_slot..scan_slot{
-            self.unlock(i);
         }
     }
 
     fn target_slot(&self, page: u64) -> usize {
         self.random_state.hash_one(page) as usize & self.slot_index_mask
-    }
-
-    fn load(&self, i: usize) -> PageRecord {
-        PageRecord::from_u64(self.slots[i].load(Relaxed))
-    }
-
-    fn unlock(&self,i:usize){
-        debug_assert!(self.load(i).is_locked());
-        self.slots[i].fetch_sub(1<<63,Relaxed);
-    }
-
-    fn update<F: FnMut(PageRecord) -> Result<(PageRecord, A), B>, A, B>(
-        &self,
-        i: usize,
-        mut f: F,
-    ) -> Result<A, B> {
-        loop {
-            let mut curr = PageRecord::from_u64(self.slots[i].load(Relaxed));
-            while !curr.is_locked() {
-                match f(curr) {
-                    Ok((n, a)) => match self.slots[i].compare_exchange_weak(
-                        curr.to_u64(),
-                        n.to_u64(),
-                        Relaxed,
-                        Relaxed,
-                    ) {
-                        Ok(_) => return Ok(a),
-                        Err(found) => {
-                            curr = PageRecord::from_u64(found);
-                        }
-                    },
-                    Err(b) => return Err(b),
-                }
-            }
-            yield_now();
-        }
-    }
-
-    fn psl(&self, target_slot: usize, actual_slot: usize) -> usize {
-        (actual_slot - target_slot) & self.slot_index_mask
     }
 }
