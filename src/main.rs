@@ -159,7 +159,7 @@ fn main() {
     let threads = 1;
     let phys_size = 300 * MB;
     let max_use = phys_size - phys_size / 4;
-    let avg_alloc_size = 3 * KB;
+    let avg_alloc_size = 300 * KB;
     let alloc_per_thread = 10_000;
 
     for alloc in allocs {

@@ -41,7 +41,6 @@ pub unsafe fn allocate_l2_tables(
 }
 
 pub unsafe fn map_huge_page(page: Page<Size2MiB>, frame: PhysFrame<Size2MiB>) {
-    println!("mapping {page:?} -> {frame:?}");
     let (l4_frame, _) = Cr3::read();
     let l4 = VirtAddr::new(l4_frame.start_address().as_u64() + PHYS_OFFSET)
         .as_mut_ptr::<PageTableEntry>();
@@ -65,7 +64,6 @@ pub unsafe fn map_huge_page(page: Page<Size2MiB>, frame: PhysFrame<Size2MiB>) {
         frame.start_address(),
         PageTableFlags::PRESENT | PageTableFlags::HUGE_PAGE | PageTableFlags::WRITABLE,
     );
-    println!("mapped  {page:?} -> {frame:?}");
 }
 
 fn paddr(x: PhysAddr) -> VirtAddr {

@@ -55,11 +55,6 @@ unsafe impl TestAlloc for LocalData {
                 eprintln!("out of memory");
                 return ptr::null_mut();
             }
-            if self.current_page == max_page {
-                self.global
-                    .mapped_pages
-                    .increment_at(self.current_page_index, self.current_page);
-            }
             let mut freed_frame = None;
             if max_page != self.current_page {
                 freed_frame = self.global.mapped_pages.decrement(self.current_page);
@@ -93,9 +88,7 @@ unsafe impl TestAlloc for LocalData {
         self.global.available_frames.lock().unwrap().extend(
             Page::range_inclusive(min_page, max_page)
                 .filter_map(|p| self.global.mapped_pages.decrement(p))
-                .inspect(|f| {
-                    eprintln!("reclaim {f:?}");
-                }),
+                .inspect(|f| {}),
         );
     }
 }

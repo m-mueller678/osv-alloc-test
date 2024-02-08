@@ -16,7 +16,7 @@ const FRAME_SHIFT: u32 = PAGE_BITS;
 const COUNT_SHIFT: u32 = FRAME_SHIFT + FRAME_BITS;
 
 pub struct PageMap {
-    base_page: Page<Size2MiB>,
+    pub base_page: Page<Size2MiB>,
     slot_index_mask: usize,
     slots: Vec<AtomicU64>,
     random_state: ahash::RandomState,
@@ -60,7 +60,7 @@ impl PageMap {
             if (found >> COUNT_SHIFT) != 0 && (found & mask(PAGE_BITS)) == page {
                 let old_val = self.slots[i].fetch_sub(1 << COUNT_SHIFT, Relaxed);
                 return if old_val >> COUNT_SHIFT == 1 {
-                    let frame = old_val >> FRAME_SHIFT & (1 << (FRAME_BITS - 1));
+                    let frame = (old_val >> FRAME_SHIFT) & mask(FRAME_BITS);
                     Some(PhysFrame::from_start_address(PhysAddr::new(frame << 21)).unwrap())
                 } else {
                     None
@@ -74,7 +74,6 @@ impl PageMap {
     pub fn insert(&self, page: Page<Size2MiB>, frame: PhysFrame<Size2MiB>, count: usize) -> usize {
         #[cfg(debug_assertions)]
         let _g = self.lock.lock().unwrap();
-
         const_assert!(COUNT_SHIFT + COUNT_BITS == 64);
         let page = page - self.base_page;
         let frame = frame.start_address().as_u64() >> 21;
