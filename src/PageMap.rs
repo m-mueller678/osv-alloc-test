@@ -42,6 +42,10 @@ fn mask(bits:u32)->u64{
     1u64<<bits -1
 }
 
+fn check_width(val:u64,bits:u32){
+    debug_assert!( val | mask(bits) ==mask(bits) );
+}
+
 impl PageMap {
     pub fn decrement_and_remove_0(&self, page: Page<Size2MiB>) -> Option<PhysFrame<Size2MiB>> {
         assert!(PAGE_SHIFT==0);
@@ -53,14 +57,14 @@ impl PageMap {
             let found = self.load(scan_slot);
             if (found>>COUNT_SHIFT)!=0 && (found & mask(PAGE_BITS)) == target_page{
                 let old_val = self.slots[scan_slot].fetch_sub(1<<COUNT_SHIFT,Relaxed);
-                if old_val>>COUNT_SHIFT == 1{
-                    let frame = old_val >> FRAME_SHIFT & (1<<FRAME_BITS -1);
-                    return Some(PhysFrame::from_start_address(PhysAddr::new(frame<<21)).unwrap())
-                }else{
-                    return None
+                return if old_val >> COUNT_SHIFT == 1 {
+                    let frame = old_val >> FRAME_SHIFT & (1 << FRAME_BITS - 1);
+                    Some(PhysFrame::from_start_address(PhysAddr::new(frame << 21)).unwrap())
+                } else {
+                    None
                 }
             }else{
-                scan_slot+=1;
+                scan_slot= (scan_slot+1)&self.slot_index_mask;
             }
         }
     }
@@ -71,20 +75,18 @@ impl PageMap {
         frame: PhysFrame<Size2MiB>,
         count: usize,
     ){
-
-        let
-        let mut to_insert = PageRecord::new();
-        to_insert.set_count(count.try_into().unwrap());
-        to_insert.set_frame(
-            (frame.start_address().as_u64() / Size2MiB::SIZE)
-                .try_into()
-                .unwrap(),
-        );
-        to_insert.set_page((page - self.base_page).try_into().unwrap());
-        let mut target_slot = self.target_slot(to_insert);
-        let first_target_slot = target_slot;
-        let mut scan_slot = target_slot;
+        assert!(COUNT_SHIFT+COUNT_BITS==64);
+        let page = page-self.base_page;
+        let frame = frame.start_address().as_u64()>>21;
+        let count=count as u64;
+        check_width(page,PAGE_BITS);
+        check_width(frame,FRAME_BITS);
+        check_width(count,COUNT_BITS);
+        let record = page<<PAGE_SHIFT | frame<<FRAME_SHIFT | count<<COUNT_SHIFT;
+        let mut target_slot = self.target_slot(page);
         loop {
+            let x=self.slots[target_slot].load(Relaxed);
+            if
             let Ok(update_result):Result<_,()> = self.update(target_slot, |p| {
                 if p.count() == 0 {
                     Ok((to_insert, None))
