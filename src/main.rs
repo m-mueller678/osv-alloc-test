@@ -1,3 +1,4 @@
+use crate::myalloc::LocalData;
 use libc::*;
 use rand::distributions::Uniform;
 use rand::prelude::*;
@@ -12,7 +13,6 @@ use std::thread::scope;
 use std::time::Instant;
 use tikv_jemallocator::Jemalloc;
 use x86_64::registers::control::Cr3;
-use crate::myalloc::LocalData;
 use x86_64::structures::paging::page::PageRange;
 use x86_64::structures::paging::{
     FrameAllocator, Mapper, OffsetPageTable, Page, PageSize, PageTable, PhysFrame, Size2MiB,

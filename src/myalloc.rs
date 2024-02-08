@@ -87,7 +87,7 @@ unsafe impl TestAlloc for LocalData {
             Page::<Size2MiB>::containing_address(start_addr + layout.size() as u64 - 1u64);
         self.global.available_frames.lock().unwrap().extend(
             Page::range_inclusive(min_page, max_page)
-                .filter_map(|p| self.global.mapped_pages.decrement(p))
+                .filter_map(|p| self.global.mapped_pages.decrement(p)),
         );
     }
 }
@@ -149,7 +149,7 @@ impl LocalData {
         println!("unmapping complete");
         dbg!(virt_pages.end - virt_pages.start, virt_pages);
         let global = Arc::new(GlobalData {
-            mapped_pages: PageMap::with_num_slots(
+            mapped_pages: PageMap::new(
                 phys_pages.count() + phys_pages.count() / 4,
                 virt_pages.start,
             ),

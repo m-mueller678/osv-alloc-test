@@ -6,8 +6,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-default=["page_map_debug"]
-page_map_debug=[]
+default=["small_hash_map_debug"]
+small_hash_map_debug =[]
 
 [dependencies]
 libc = "0.2.153"
@@ -17,3 +17,4 @@ ahash = { version = "0.8.7" ,default-features = false}
 modular-bitfield = "0.11.2"
 tikv-jemallocator ="0.5.4"
 static_assertions = "1.1.0"
+radium = "1.1.0"
