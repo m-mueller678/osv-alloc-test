@@ -1,0 +1,42 @@
+use std::mem::MaybeUninit;
+use x86_64::registers::control::Cr3;
+use x86_64::structures::paging::page::{PageRange, PageRangeInclusive};
+use x86_64::structures::paging::{FrameAllocator, PageTable, PageTableFlags, Size2MiB, Size4KiB};
+use x86_64::structures::paging::page_table::PageTableEntry;
+use x86_64::{PhysAddr, VirtAddr};
+use crate::{MmapFrameAllocator, PHYS_OFFSET};
+
+pub unsafe fn allocate_l2_tables(range:PageRangeInclusive<Size2MiB>,frame_allocator:&mut MmapFrameAllocator){
+    let (l4_frame,_) = Cr3::read();
+    let l4 = VirtAddr::new( l4_frame.start_address().as_u64() + PHYS_OFFSET ).as_mut_ptr::<PageTableEntry>();
+    for i4 in usize::from(range.start.p4_index())..=usize::from(range.end.p4_index()){
+        let l4_entry = ensure_present(l4.add(i4.into()),frame_allocator);
+        assert!(l4_entry.flags().contains(PageTableFlags::PRESENT));
+        let l3=VirtAddr::new(l4_entry.frame().unwrap_unchecked().start_address().as_u64() + PHYS_OFFSET).as_mut_ptr::<PageTableEntry>();
+        let i3_start = if i4 == usize::from(range.start.p4_index()){usize::from(range.start.p3_index())} else{0};
+        let i3_end = if i4 == usize::from(range.end.p4_index()){usize::from(range.end.p3_index())} else{511};
+        for i3 in i3_start..=i3_end{
+            if l3.add(i3).read().is_unused(){
+                ensure_present(l3.add(i3.into()),frame_allocator);
+            }
+        }
+    }
+}
+
+fn paddr(x:PhysAddr)->VirtAddr{
+    VirtAddr::new(x.as_u64() + PHYS_OFFSET)
+}
+
+unsafe fn ensure_present(pe:*mut PageTableEntry,frame_allocator:&mut MmapFrameAllocator)->PageTableEntry{
+    {
+        frame_allocator.refill();
+        let pe=&mut *pe;
+        if !pe.flags().contains(PageTableFlags::PRESENT){
+            assert!(pe.is_unused(),"unexpected page flags: {:?}",pe.flags());
+            let new_frame=frame_allocator.allocate_frame().unwrap().start_address();
+            paddr(new_frame).as_mut_ptr::<MaybeUninit<PageTable>>().write(MaybeUninit::zeroed());
+            pe.set_addr(new_frame,PageTableFlags::PRESENT)
+        }
+    }
+    pe.read()
+}

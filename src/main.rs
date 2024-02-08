@@ -20,8 +20,11 @@ use x86_64::structures::paging::{
     Size2MiB, Size4KiB,
 };
 use x86_64::{PhysAddr, VirtAddr};
+use crate::paging::allocate_l2_tables;
 
 pub mod page_map;
+pub mod myalloc;
+pub mod paging;
 
 // from osv/libs/mman.cc
 const MAP_UNINITIALIZED: i32 = 0x4000000;
@@ -125,7 +128,12 @@ impl PagingAllocator {
                 p.start_address().as_mut_ptr::<u8>().write(0);
             }
         }
+        let mut frame_allocator=MmapFrameAllocator::default();
+
         let virt_pages = alloc_mmap::<Size2MiB>(VIRT_SIZE / HUGE_PAGE_SIZE, false);
+        unsafe{
+            allocate_l2_tables(Page::range_inclusive(virt_pages.start,virt_pages.end-1),&mut frame_allocator);
+        }
 
         println!("mmap done");
         println!("unmapping virtual range pages");
@@ -147,7 +155,7 @@ impl PagingAllocator {
 
         println!("unmapping complete");
         let ret = PagingAllocator {
-            frame_allocator: Default::default(),
+            frame_allocator,
             available_frames: phys_pages
                 .into_iter()
                 .map(|p| unsafe { page_table() }.translate_page(p).unwrap())
