@@ -287,9 +287,6 @@ impl LocalData {
         debug_assert!(layout.align() <= (1 << 21));
         let (level, frame_count) = Self::large_alloc_info(layout.size());
         let address = VirtAddr::from_ptr(ptr);
-        self.global
-            .quantum_storage
-            .dealloc_dirty(level, address_to_quantum(address));
         let first_page = Page::<Size2MiB>::from_start_address(address).unwrap();
         for i in 0..frame_count {
             unsafe {
@@ -298,6 +295,9 @@ impl LocalData {
             }
         }
         self.release_frames();
+        self.global
+            .quantum_storage
+            .dealloc_dirty(level, address_to_quantum(address));
     }
 
     fn release_frames(&mut self) {
