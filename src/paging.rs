@@ -97,7 +97,7 @@ pub fn vaddr(x: PhysAddr) -> VirtAddr {
     VirtAddr::new(x.as_u64() + PHYS_OFFSET)
 }
 pub fn paddr(x: VirtAddr) -> PhysAddr {
-    PhysAddr::new(x.as_u64() -PHYS_OFFSET)
+    PhysAddr::new(x.as_u64() - PHYS_OFFSET)
 }
 
 unsafe fn ensure_present(
