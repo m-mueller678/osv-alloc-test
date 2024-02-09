@@ -244,6 +244,7 @@ fn test_alloc<A: TestAlloc>(
                         }
                         let size = size_range.sample(&mut rng);
                         let ptr = a.alloc(layout(size)) as *mut usize;
+                        assert!(!ptr.is_null());
                         if allocs.len() >= 102500 {
                             dbg!(ptr);
                         }
@@ -269,6 +270,7 @@ fn test_alloc<A: TestAlloc>(
                         {
                             let size = size_range.sample(&mut rng);
                             let ptr = a.alloc(layout(size)) as *mut usize;
+                            assert!(!ptr.is_null());
                             for i in mode.index_range(size) {
                                 ptr.add(i).write(next_id + i);
                             }
