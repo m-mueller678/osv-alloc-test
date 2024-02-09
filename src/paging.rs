@@ -90,7 +90,7 @@ pub unsafe fn unmap_huge_page(page: Page<Size2MiB>) -> PhysFrame<Size2MiB> {
     debug_assert!(l2_entry
         .flags()
         .contains(PageTableFlags::PRESENT | PageTableFlags::HUGE_PAGE));
-    PhysFrame::from_start_address(l2_entry.frame().unwrap().start_address()).unwrap()
+    PhysFrame::from_start_address(l2_entry.addr()).unwrap()
 }
 
 fn paddr(x: PhysAddr) -> VirtAddr {

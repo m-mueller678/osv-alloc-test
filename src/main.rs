@@ -153,10 +153,11 @@ fn main() {
     }
 
     let test_mode = AllocTestMode::First;
-    let threads = 8;
-    let phys_size = 2 * GB;
+    let threads = 1;
+    let phys_size = 256*MB;
+    let virt_size = 512*GB;
     let max_use = phys_size - phys_size / 4;
-    let avg_alloc_size = 64 * KB;
+    let avg_alloc_size = 64 * MB;
     let alloc_per_thread = 1_000_000;
 
     for alloc in allocs {
@@ -168,7 +169,7 @@ fn main() {
                     avg_alloc_size,
                     max_use,
                     test_mode,
-                    &mut LocalData::create(threads, phys_size),
+                    &mut LocalData::create(threads, phys_size,virt_size),
                 );
             }
             "jemalloc" => test_alloc(

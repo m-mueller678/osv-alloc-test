@@ -123,7 +123,7 @@ unsafe impl TestAlloc for LocalData {
             return;
         }
         if layout.size() > MAX_MID_SIZE {
-            self.dealloc_large(ptr, layout)
+            return self.dealloc_large(ptr, layout)
         }
         let start_addr = VirtAddr::from_ptr(ptr);
         let min_page = Page::<Size2MiB>::containing_address(start_addr);
@@ -178,8 +178,10 @@ impl LocalData {
         first_page.start_address().as_mut_ptr()
     }
 
-    pub fn create(threads: usize, physical_size: usize) -> Vec<Self> {
+    pub fn create(threads: usize, physical_size: usize,virt_size:usize) -> Vec<Self> {
         assert_eq!(physical_size % Size2MiB::SIZE as usize, 0);
+        assert_eq!(virt_size % (1<<VIRTUAL_QUANTUM_BITS), 0);
+        assert!(virt_size <= 1<<46);
 
         let phys_pages = alloc_mmap::<Size2MiB>(physical_size / Size2MiB::SIZE as usize, false);
         for p in phys_pages {
@@ -189,7 +191,7 @@ impl LocalData {
         }
         // these must be quantum aligned
         let virt_area_start = 1u64 << 47;
-        let virt_area_end = virt_area_start + 5 * TB as u64;
+        let virt_area_end = virt_area_start + virt_size as u64;
 
         let virt_pages = Page::range(
             Page::containing_address(VirtAddr::new(virt_area_start)),
