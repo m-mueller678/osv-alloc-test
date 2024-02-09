@@ -26,6 +26,7 @@ pub mod no_frame_allocator;
 pub mod page_map;
 pub mod paging;
 pub mod frame_list;
+pub mod log_alloc;
 
 // from osv/libs/mman.cc
 const MAP_UNINITIALIZED: i32 = 0x4000000;

@@ -1,6 +1,6 @@
 use std::mem::{MaybeUninit, size_of};
 use std::ptr;
-use std::ptr::addr_of_mut;
+use std::ptr::{addr_of_mut, replace};
 use x86_64::structures::paging::{PageSize, PhysFrame, Size2MiB, Size4KiB};
 use x86_64::VirtAddr;
 use crate::paging::{paddr, vaddr};
@@ -45,14 +45,16 @@ impl<S:PageSize,const C:usize> FrameList<S,C>{
     pub fn pop(&mut self)->Option<PhysFrame<S>>{
         if self.0.is_null(){return None}
         unsafe{
-            {
+            let next ={
                 let ff = &mut *self.0;
                 if ff.count > 0 {
                     ff.count -= 1;
                     return Some(ff.frames[ff.count].assume_init_read());
                 }
-            }
-            Some(PhysFrame::from_start_address(paddr(VirtAddr::from_ptr(self.0))).unwrap())
+                ff.next
+            };
+            let frame = replace(&mut self.0,next);
+            Some(PhysFrame::from_start_address(paddr(VirtAddr::from_ptr(frame))).unwrap())
         }
     }
 

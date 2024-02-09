@@ -8,6 +8,7 @@ edition = "2021"
 [features]
 default=["small_hash_map_debug"]
 small_hash_map_debug =[]
+log_rust_global_alloc=[]
 
 [dependencies]
 libc = "0.2.153"
