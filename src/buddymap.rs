@@ -41,28 +41,36 @@ impl<const H: usize> BuddyTower<H> {
     pub fn insert(&self, mut level: u32, first_quantum: u32) {
         debug_assert!(first_quantum % (1 << level) == 0);
         while self.maps[level as usize].insert(first_quantum >> level) {
+            //eprintln!("found buddy on level {level:2}");
             level += 1;
         }
+        //eprintln!("inserted to level {level:2}");
     }
 
     pub fn remove(&self, level: u32, rng: &mut impl Rng) -> Option<u32> {
+        //eprintln!("removing from level {level:2}");
         let mut taken_from = level;
         while (taken_from as usize) < self.maps.len() {
             if let Some(mut buddy_id) = self.maps[taken_from as usize].remove(rng) {
+                //eprintln!("found {buddy_id:16b} on level {taken_from:2}");
                 while taken_from > level {
                     taken_from -= 1;
                     buddy_id *= 2;
-                    self.maps[taken_from as usize].insert(buddy_id + 1);
+                    //eprintln!("insert excess {:16b} on level {taken_from:2}",buddy_id + 1);
+                    let found_buddy = self.maps[taken_from as usize].insert(buddy_id + 1);
+                    debug_assert!(!found_buddy);
                 }
                 return Some(buddy_id << taken_from);
             } else {
                 taken_from += 1;
             }
         }
+        //eprintln!("none found");
         None
     }
 
     pub fn from_range(range: Range<u32>) -> Self {
+        dbg!(&range);
         let ret = BuddyTower {
             maps: (0..H)
                 .map(|_| BuddyMap::default())

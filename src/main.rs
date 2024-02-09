@@ -168,7 +168,7 @@ fn main() {
                     avg_alloc_size,
                     max_use,
                     test_mode,
-                    &mut LocalData::create(threads, phys_size, TB),
+                    &mut LocalData::create(threads, phys_size),
                 );
             }
             "jemalloc" => test_alloc(
