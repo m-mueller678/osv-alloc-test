@@ -258,7 +258,6 @@ fn test_alloc<A: TestAlloc>(
 
                     barrier.wait();
                     barrier.wait();
-
                     for _ in 0..allocs_per_thread {
                         {
                             let (ptr, size) = allocs.pop_front().unwrap();

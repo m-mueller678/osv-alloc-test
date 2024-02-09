@@ -1,23 +1,34 @@
-use std::mem::MaybeUninit;
-use std::ptr::{addr_of, addr_of_mut};
-use std::sync::atomic::AtomicU64;
-use x86_64::structures::paging::{PageSize, PhysFrame};
+use std::mem::{MaybeUninit, size_of};
+use std::ptr;
+use std::ptr::addr_of_mut;
+use x86_64::structures::paging::{PageSize, PhysFrame, Size2MiB, Size4KiB};
 use x86_64::VirtAddr;
 use crate::paging::{paddr, vaddr};
 
-#[derive(Default)]
-struct FrameList<S:PageSize>(
-    *mut ListFrame<S>,
+unsafe impl<S:PageSize,const C:usize> Send for FrameList<S,C>{}
+
+pub struct FrameList<S:PageSize,const C:usize>(
+    *mut ListFrame<S,C>,
 );
 
-struct ListFrame<S:PageSize>{
+pub type FrameList4K =FrameList<Size4KiB,{512-2}>;
+pub type FrameList2M =FrameList<Size2MiB,{512*512-2}>;
+
+struct ListFrame<S:PageSize,const C:usize>{
     count:usize,
-    next: *mut ListFrame<S>,
-    frames: [MaybeUninit<PhysFrame<S>>,S::SIZE/8-2],
+    next: *mut ListFrame<S,C>,
+    frames: [MaybeUninit<PhysFrame<S>>;C],
 }
 
-impl<S:PageSize> FrameList<S>{
-    fn push(&mut self,f:PhysFrame<S>){
+impl<S:PageSize,const C:usize> Default for FrameList<S,C>{
+    fn default() -> Self {
+        assert_eq!(size_of::<ListFrame<S,C>>(), S::SIZE as usize);
+        FrameList(ptr::null_mut())
+    }
+}
+
+impl<S:PageSize,const C:usize> FrameList<S,C>{
+    pub fn push(&mut self,f:PhysFrame<S>){
         unsafe {
             if !self.0.is_null() {
                 let ff = &mut *self.0;
@@ -31,7 +42,7 @@ impl<S:PageSize> FrameList<S>{
         }
     }
 
-    fn pop(&mut self)->Option<PhysFrame>{
+    pub fn pop(&mut self)->Option<PhysFrame<S>>{
         if self.0.is_null(){return None}
         unsafe{
             {
@@ -45,18 +56,29 @@ impl<S:PageSize> FrameList<S>{
         }
     }
 
-    fn merge_into_vec(&mut self,dst:&mut Vec<PhysFrame<S>>){
-        todo!()
+    pub fn merge_into_vec(&mut self,dst:&mut Vec<PhysFrame<S>>){
+        while let Some(x)=self.pop(){
+            dst.push(x);
+        }
     }
 
-    fn steal_from_vec(&mut self,src:&mut Vec<PhysFrame<S>>,count:usize){
-        debug_assert!(self.0.is_null());
-        todo!()
+    pub fn steal_from_vec(&mut self,src:&mut Vec<PhysFrame<S>>,count:usize)->Result<(),()>{
+        if src.len()<count{
+            return Err(())
+        }
+        for _ in 0..count{
+            self.push(src.pop().unwrap())
+        }
+        Ok(())
+    }
+
+    pub fn is_empty(&self)->bool{
+        self.0.is_null()
     }
 
     unsafe fn push_first(&mut self,f:PhysFrame<S>){
         let old=self.0;
-        self.0 = vaddr(f.start_address()).as_mut_ptr::<ListFrame<S>>();
+        self.0 = vaddr(f.start_address()).as_mut_ptr::<ListFrame<S,C>>();
         *addr_of_mut!((*self.0).count)=0;
         *addr_of_mut!((*self.0).next)=old;
     }

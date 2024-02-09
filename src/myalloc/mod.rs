@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 use x86_64::structures::paging::mapper::{MapperFlushAll, UnmapError};
 use x86_64::structures::paging::{Mapper, Page, PageSize, PhysFrame, Size2MiB};
 use x86_64::VirtAddr;
+use crate::frame_list::FrameList2M;
 
 const VIRTUAL_QUANTUM_BITS: u32 = 24;
 const MAX_MID_SIZE: usize = 16 * MB;
@@ -25,7 +26,7 @@ mod quantum_storage;
 struct GlobalData {
     allocs_per_page: PageMap,
     pages_per_quantum:
-        SmallCountHashMap<u32, { VIRTUAL_QUANTUM_BITS + 1 - 21 }, 0, { 48 - VIRTUAL_QUANTUM_BITS }>,
+    SmallCountHashMap<u32, { VIRTUAL_QUANTUM_BITS + 1 - 21 }, 0, { 48 - VIRTUAL_QUANTUM_BITS }>,
     available_frames: Mutex<Vec<PhysFrame<Size2MiB>>>,
     quantum_storage: QuantumStorage,
 }
@@ -50,20 +51,11 @@ impl GlobalData {
             self.quantum_storage.dealloc_dirty(0, q)
         }
     }
-
-    fn decrement_page(&self, p: Page<Size2MiB>) {
-        if let Some(x) = self.allocs_per_page.decrement(p) {
-            self.available_frames.lock().unwrap().push(x);
-            unsafe { unmap_huge_page(p) };
-            self.decrement_quantum(address_to_quantum(p.start_address()))
-        }
-    }
 }
 
-#[derive(Clone)]
 pub struct LocalData {
     rng: SmallRng,
-    available_frames: Vec<PhysFrame<Size2MiB>>,
+    available_frames: FrameList2M,
     // these are sign extended virtual addresses. be careful around the half of the address space
     min_address: u64,
     bump: u64,
@@ -84,7 +76,8 @@ unsafe impl TestAlloc for LocalData {
         let aligned_bump = self.bump & !(layout.align() as u64 - 1);
         let new_bump = aligned_bump - layout.size() as u64;
         if new_bump < self.min_address {
-            self.global.decrement_page(self.current_page);
+            self.decrement_page(self.current_page);
+            self.release_frames();
             self.claim_quantum().unwrap();
             return self.alloc(layout);
         }
@@ -101,7 +94,7 @@ unsafe impl TestAlloc for LocalData {
                 return ptr::null_mut();
             }
             if max_page != self.current_page {
-                self.global.decrement_page(self.current_page)
+                self.decrement_page(self.current_page)
             }
             for p in Page::range(min_page, self.current_page).skip(1) {
                 let _ = self
@@ -113,11 +106,11 @@ unsafe impl TestAlloc for LocalData {
                 self.global
                     .map_and_insert(min_page, self.available_frames.pop().unwrap(), 2);
             let current_qunatum = address_to_quantum(self.current_page.start_address());
-            eprintln!("inc {} + {}",self.current_quantum_index,self.current_page - min_page);
+            eprintln!("inc {} + {}", self.current_quantum_index, self.current_page - min_page);
             self.global
                 .pages_per_quantum
-                .increment_at(self.current_quantum_index, current_qunatum,(self.current_page - min_page) as u32);
-            debug_assert!(self.available_frames.is_empty());
+                .increment_at(self.current_quantum_index, current_qunatum, (self.current_page - min_page) as u32);
+            self.release_frames();
         }
         self.bump = new_bump;
         VirtAddr::new_unsafe(self.bump).as_mut_ptr()
@@ -135,21 +128,15 @@ unsafe impl TestAlloc for LocalData {
         let max_page =
             Page::<Size2MiB>::containing_address(start_addr + layout.size() as u64 - 1u64);
         for p in Page::range_inclusive(min_page, max_page) {
-            self.global.decrement_page(p);
+            self.decrement_page(p);
         }
+        self.release_frames();
     }
 }
 
 impl LocalData {
     fn get_frames(&mut self, count: usize) -> Result<(), ()> {
-        assert!(self.available_frames.is_empty());
-        let mut gf = self.global.available_frames.lock().unwrap();
-        if gf.len() < count {
-            return Err(());
-        }
-        let new_len = gf.len() - count;
-        self.available_frames.extend_from_slice(&gf[new_len..]);
-        gf.truncate(new_len);
+        self.available_frames.steal_from_vec(&mut self.global.available_frames.lock().unwrap(), count)?;
         Ok(())
     }
 
@@ -260,7 +247,7 @@ impl LocalData {
                     rng: SmallRng::seed_from_u64(
                         RandomState::with_seed(0xee61096f95490820).hash_one(i),
                     ),
-                    available_frames: Vec::new(),
+                    available_frames: Default::default(),
                     min_address: 1u64 << 40,
                     bump: 1 << 40,
                     current_page_index: usize::MAX,
@@ -310,10 +297,20 @@ impl LocalData {
                     .push(unmap_huge_page(first_page + i as u64));
             }
         }
-        self.global
-            .available_frames
-            .lock()
-            .unwrap()
-            .extend(self.available_frames.drain(..));
+        self.release_frames();
+    }
+
+    fn release_frames(&mut self) {
+        if !self.available_frames.is_empty(){
+            self.available_frames.merge_into_vec(&mut self.global.available_frames.lock().unwrap());
+        }
+    }
+
+    fn decrement_page(&mut self, p: Page<Size2MiB>) {
+        if let Some(x) = self.global.allocs_per_page.decrement(p) {
+            self.available_frames.push(x);
+            unsafe { unmap_huge_page(p) };
+            self.global.decrement_quantum(address_to_quantum(p.start_address()))
+        }
     }
 }
