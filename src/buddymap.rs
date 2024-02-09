@@ -1,8 +1,10 @@
 use rand::Rng;
 use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
+use std::mem::take;
 use std::ops::Range;
 use std::sync::Mutex;
+use x86_64::structures::paging::mapper::MapperFlushAll;
 
 #[derive(Default)]
 pub struct BuddyMap {
@@ -35,6 +37,19 @@ impl BuddyMap {
 
 pub struct BuddyTower<const H: usize> {
     maps: [BuddyMap; H],
+}
+
+impl<const H:usize> Default for BuddyTower<H>{
+    fn default() -> Self {
+        BuddyTower {
+            maps: (0..H)
+                .map(|_| BuddyMap::default())
+                .collect::<Vec<_>>()
+                .try_into()
+                .map_err(|_| ())
+                .unwrap(),
+        }
+    }
 }
 
 impl<const H: usize> BuddyTower<H> {
@@ -71,14 +86,7 @@ impl<const H: usize> BuddyTower<H> {
 
     pub fn from_range(range: Range<u32>) -> Self {
         dbg!(&range);
-        let ret = BuddyTower {
-            maps: (0..H)
-                .map(|_| BuddyMap::default())
-                .collect::<Vec<_>>()
-                .try_into()
-                .map_err(|_| ())
-                .unwrap(),
-        };
+        let ret = Self::default();
         for x in range {
             ret.insert(0, x);
         }
@@ -90,5 +98,16 @@ impl<const H: usize> BuddyTower<H> {
             print!("{i:2}:{:4}, ", l.pairs.lock().unwrap().len())
         }
         println!();
+    }
+
+    pub fn steal_all_and_flush(&self,other:&Self){
+        let stolen:Vec<_> = other.maps.iter().map(|x|take(&mut * x.pairs.lock().unwrap())).collect();
+        MapperFlushAll::new().flush_all();
+        assert_eq!(stolen.len(),H);
+        for (level,buddies) in stolen.into_iter().enumerate(){
+            for b in buddies{
+                self.insert(level as u32,(b.0<<1 | b.1 as u32)<<level)
+            }
+        }
     }
 }
