@@ -48,6 +48,7 @@ impl GlobalData {
     fn decrement_page(&self, p: Page<Size2MiB>) {
         if let Some(x) = self.allocs_per_page.decrement(p) {
             self.available_frames.lock().unwrap().push(x);
+            unsafe{unmap_huge_page(p)};
             self.decrement_quantum(
                 ((p.start_address().as_u64() & ADDRESS_BIT_MASK) >> VIRTUAL_QUANTUM_BITS) as u32,
             )
