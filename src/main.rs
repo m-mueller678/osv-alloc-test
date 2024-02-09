@@ -157,7 +157,7 @@ fn main() {
     let phys_size = 2 * GB;
     let max_use = phys_size - phys_size / 4;
     let avg_alloc_size = 64 * KB;
-    let alloc_per_thread = 10_000_000;
+    let alloc_per_thread = 1_000_000;
 
     for alloc in allocs {
         println!("{alloc}:");

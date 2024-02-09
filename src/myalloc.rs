@@ -1,7 +1,7 @@
 use crate::buddymap::BuddyTower;
 use crate::page_map::{PageMap, SmallCountHashMap};
 use crate::paging::{allocate_l2_tables, map_huge_page, unmap_huge_page};
-use crate::{alloc_mmap, page_table, MmapFrameAllocator, TestAlloc, PHYS_OFFSET, TB};
+use crate::{alloc_mmap, page_table, MmapFrameAllocator, TestAlloc, PHYS_OFFSET, TB, MB};
 use ahash::RandomState;
 use rand::rngs::SmallRng;
 use rand::SeedableRng;
@@ -12,8 +12,8 @@ use x86_64::structures::paging::mapper::{MapperFlushAll, UnmapError};
 use x86_64::structures::paging::{Mapper, Page, PageSize, PhysFrame, Size2MiB};
 use x86_64::VirtAddr;
 
-const VIRTUAL_QUANTUM_BITS: u32 = 30;
-const MAX_MID_SIZE: usize = 1 << (VIRTUAL_QUANTUM_BITS - 1);
+const VIRTUAL_QUANTUM_BITS: u32 = 24;
+const MAX_MID_SIZE: usize = 16*MB;
 const ADDRESS_BIT_MASK: u64 = (!0u64) >> 16;
 
 struct GlobalData {
