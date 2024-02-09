@@ -52,7 +52,7 @@ fn alloc_mmap<P: PageSize>(count: usize, zeroed: bool) -> PageRange<P> {
 }
 
 const KB: usize = 1 << 10;
-const MB: usize = 1 << 20;
+const MB: usize = KB << 10;
 const GB: usize = MB << 10;
 const TB: usize = GB << 10;
 
@@ -154,10 +154,10 @@ fn main() {
 
     let test_mode = AllocTestMode::First;
     let threads = 1;
-    let phys_size = 128*MB;
-    let virt_size = 1*TB;
+    let phys_size = 128 * MB;
+    let virt_size = 1 * TB;
     let max_use = phys_size - phys_size / 4;
-    let avg_alloc_size =20 * MB;
+    let avg_alloc_size = 20 * MB;
     let alloc_per_thread = 10_000;
 
     for alloc in allocs {
@@ -169,7 +169,7 @@ fn main() {
                     avg_alloc_size,
                     max_use,
                     test_mode,
-                    &mut LocalData::create(threads, phys_size,virt_size),
+                    &mut LocalData::create(threads, phys_size, virt_size),
                 );
             }
             "jemalloc" => test_alloc(

@@ -39,7 +39,7 @@ pub struct BuddyTower<const H: usize> {
     maps: [BuddyMap; H],
 }
 
-impl<const H:usize> Default for BuddyTower<H>{
+impl<const H: usize> Default for BuddyTower<H> {
     fn default() -> Self {
         BuddyTower {
             maps: (0..H)
@@ -100,13 +100,17 @@ impl<const H: usize> BuddyTower<H> {
         println!();
     }
 
-    pub fn steal_all_and_flush(&self,other:&Self){
-        let stolen:Vec<_> = other.maps.iter().map(|x|take(&mut * x.pairs.lock().unwrap())).collect();
+    pub fn steal_all_and_flush(&self, other: &Self) {
+        let stolen: Vec<_> = other
+            .maps
+            .iter()
+            .map(|x| take(&mut *x.pairs.lock().unwrap()))
+            .collect();
         MapperFlushAll::new().flush_all();
-        assert_eq!(stolen.len(),H);
-        for (level,buddies) in stolen.into_iter().enumerate(){
-            for b in buddies{
-                self.insert(level as u32,(b.0<<1 | b.1 as u32)<<level)
+        assert_eq!(stolen.len(), H);
+        for (level, buddies) in stolen.into_iter().enumerate() {
+            for b in buddies {
+                self.insert(level as u32, (b.0 << 1 | b.1 as u32) << level)
             }
         }
     }

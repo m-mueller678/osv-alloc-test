@@ -1,7 +1,7 @@
-use std::ops::Range;
-use rand::Rng;
 use crate::buddymap::BuddyTower;
 use crate::myalloc::VIRTUAL_QUANTUM_BITS;
+use rand::Rng;
+use std::ops::Range;
 
 #[derive(Default)]
 pub struct QuantumStorage {
@@ -11,19 +11,20 @@ pub struct QuantumStorage {
 
 impl QuantumStorage {
     pub fn alloc(&self, level: u32, rng: &mut impl Rng) -> Option<u32> {
-        if let Some(x)  = self.available_quanta.remove(level, rng){
+        if let Some(x) = self.available_quanta.remove(level, rng) {
             return Some(x);
         }
-        self.available_quanta.steal_all_and_flush(&self.released_quanta);
-        self.available_quanta.remove(level,rng)
+        self.available_quanta
+            .steal_all_and_flush(&self.released_quanta);
+        self.available_quanta.remove(level, rng)
     }
 
     pub fn dealloc_clean(&self, level: u32, q: u32) {
-        debug_assert!(q<1u32<<31);
+        debug_assert!(q < 1u32 << 31);
         self.available_quanta.insert(level, q)
     }
     pub fn dealloc_dirty(&self, level: u32, q: u32) {
-        debug_assert!(q<1u32<<31);
+        debug_assert!(q < 1u32 << 31);
         self.released_quanta.insert(level, q)
     }
 

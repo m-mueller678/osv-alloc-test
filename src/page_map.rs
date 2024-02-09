@@ -127,16 +127,16 @@ impl<T: BetterAtom, const C: u32, const V: u32, const K: u32> SmallCountHashMap<
         }
     }
 
-    pub fn increment_at(&self, index: usize, k: T) {
+    pub fn increment_at(&self, index: usize, k: T,amount:T) {
         #[cfg(feature = "small_hash_map_debug")]
         let mut lock = self.lock.lock().unwrap();
         #[cfg(feature = "small_hash_map_debug")]
         let old_debug_count = {
             let x = &mut lock.get_mut(&k).unwrap().1;
-            *x = *x + T::from(1);
-            *x - T::from(1)
+            *x = *x + amount;
+            *x - amount
         };
-        let old = self.slots[index].fetch_add(T::from(1) << (K + V), Relaxed);
+        let old = self.slots[index].fetch_add(amount << (K + V), Relaxed);
         #[cfg(feature = "small_hash_map_debug")]
         {
             assert_eq!(old_debug_count, old >> (K + V));
@@ -177,6 +177,6 @@ impl PageMap {
     }
 
     pub fn increment_at(&self, index: usize, page: Page<Size2MiB>) {
-        self.inner.increment_at(index, page - self.base_page)
+        self.inner.increment_at(index, page - self.base_page,1)
     }
 }

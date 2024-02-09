@@ -1,7 +1,7 @@
-use crate::buddymap::BuddyTower;
+use crate::myalloc::quantum_storage::QuantumStorage;
 use crate::page_map::{PageMap, SmallCountHashMap};
 use crate::paging::{allocate_l2_tables, map_huge_page, unmap_huge_page};
-use crate::{alloc_mmap, page_table, MmapFrameAllocator, TestAlloc, PHYS_OFFSET, TB, MB};
+use crate::{alloc_mmap, page_table, MmapFrameAllocator, TestAlloc, MB, PHYS_OFFSET};
 use ahash::RandomState;
 use rand::rngs::SmallRng;
 use rand::SeedableRng;
@@ -11,13 +11,12 @@ use std::sync::{Arc, Mutex};
 use x86_64::structures::paging::mapper::{MapperFlushAll, UnmapError};
 use x86_64::structures::paging::{Mapper, Page, PageSize, PhysFrame, Size2MiB};
 use x86_64::VirtAddr;
-use crate::myalloc::quantum_storage::QuantumStorage;
 
 const VIRTUAL_QUANTUM_BITS: u32 = 24;
 const MAX_MID_SIZE: usize = 16 * MB;
 const ADDRESS_BIT_MASK: u64 = (!0u64) >> 16;
 
-fn address_to_quantum(a:VirtAddr)->u32{
+fn address_to_quantum(a: VirtAddr) -> u32 {
     ((a.as_u64() & ADDRESS_BIT_MASK) >> VIRTUAL_QUANTUM_BITS) as u32
 }
 
@@ -26,7 +25,7 @@ mod quantum_storage;
 struct GlobalData {
     allocs_per_page: PageMap,
     pages_per_quantum:
-    SmallCountHashMap<u32, { VIRTUAL_QUANTUM_BITS + 1 - 21 }, 0, { 48 - VIRTUAL_QUANTUM_BITS }>,
+        SmallCountHashMap<u32, { VIRTUAL_QUANTUM_BITS + 1 - 21 }, 0, { 48 - VIRTUAL_QUANTUM_BITS }>,
     available_frames: Mutex<Vec<PhysFrame<Size2MiB>>>,
     quantum_storage: QuantumStorage,
 }
@@ -46,6 +45,7 @@ impl GlobalData {
     }
 
     fn decrement_quantum(&self, q: u32) {
+        eprintln!("dec {q}");
         if self.pages_per_quantum.decrement(q).is_some() {
             self.quantum_storage.dealloc_dirty(0, q)
         }
@@ -113,9 +113,10 @@ unsafe impl TestAlloc for LocalData {
                 self.global
                     .map_and_insert(min_page, self.available_frames.pop().unwrap(), 2);
             let current_qunatum = address_to_quantum(self.current_page.start_address());
+            eprintln!("inc {} + {}",self.current_quantum_index,self.current_page - min_page);
             self.global
                 .pages_per_quantum
-                .increment_at(self.current_quantum_index, current_qunatum);
+                .increment_at(self.current_quantum_index, current_qunatum,(self.current_page - min_page) as u32);
             debug_assert!(self.available_frames.is_empty());
         }
         self.bump = new_bump;
@@ -243,7 +244,7 @@ impl LocalData {
             pages_per_quantum: SmallCountHashMap::with_num_slots(1 << 16),
             quantum_storage: QuantumStorage::from_range(
                 ((virt_area_start & ADDRESS_BIT_MASK) >> VIRTUAL_QUANTUM_BITS) as u32
-                    ..((virt_area_end & ADDRESS_BIT_MASK) >> VIRTUAL_QUANTUM_BITS) as u32
+                    ..((virt_area_end & ADDRESS_BIT_MASK) >> VIRTUAL_QUANTUM_BITS) as u32,
             ),
             available_frames: Mutex::new(
                 phys_pages
@@ -276,13 +277,17 @@ impl LocalData {
     }
 
     fn claim_quantum(&mut self) -> Result<(), ()> {
-        let q = self.global.quantum_storage.alloc(0, &mut self.rng).ok_or(())?;
-        self.get_frames(1).map_err(|_| {
-            self.global.quantum_storage.dealloc_clean(0, q)
-        })?;
+        let q = self
+            .global
+            .quantum_storage
+            .alloc(0, &mut self.rng)
+            .ok_or(())?;
+        self.get_frames(1)
+            .map_err(|_| self.global.quantum_storage.dealloc_clean(0, q))?;
         self.min_address = VirtAddr::new((q as u64) << VIRTUAL_QUANTUM_BITS).as_u64();
         self.bump = VirtAddr::new((q as u64 + 1) << VIRTUAL_QUANTUM_BITS).as_u64();
         debug_assert!(self.min_address | ADDRESS_BIT_MASK == self.bump | ADDRESS_BIT_MASK);
+        eprintln!("insert {q}");
         self.current_quantum_index = self.global.pages_per_quantum.insert(q, 0, 1);
         self.current_page = Page::from_start_address(VirtAddr::new(self.bump)).unwrap() - 1;
         self.current_page_index =
