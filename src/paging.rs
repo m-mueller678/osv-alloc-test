@@ -66,6 +66,31 @@ pub unsafe fn map_huge_page(page: Page<Size2MiB>, frame: PhysFrame<Size2MiB>) {
     );
 }
 
+
+pub unsafe fn unmap_huge_page(page: Page<Size2MiB>) ->PhysFrame<Size2MiB>{
+    let (l4_frame, _) = Cr3::read();
+    let l4 = VirtAddr::new(l4_frame.start_address().as_u64() + PHYS_OFFSET)
+        .as_mut_ptr::<PageTableEntry>();
+    let l3_frame = l4
+        .add(page.p4_index().into())
+        .read()
+        .frame()
+        .unwrap_unchecked();
+    let l3 = VirtAddr::new(l3_frame.start_address().as_u64() + PHYS_OFFSET)
+        .as_mut_ptr::<PageTableEntry>();
+    let l2_frame = l3
+        .add(page.p3_index().into())
+        .read()
+        .frame()
+        .unwrap_unchecked();
+    let l2 = VirtAddr::new(l2_frame.start_address().as_u64() + PHYS_OFFSET)
+        .as_mut_ptr::<PageTableEntry>();
+    let l2_entry = l2.add(page.p2_index().into()).replace(PageTableEntry::new());
+    debug_assert!(l2_entry.flags().contains(PageTableFlags::PRESENT|PageTableFlags::HUGE_PAGE));
+    PhysFrame::from_start_address(l2_entry.frame().unwrap().start_address()).unwrap()
+}
+
+
 fn paddr(x: PhysAddr) -> VirtAddr {
     VirtAddr::new(x.as_u64() + PHYS_OFFSET)
 }
