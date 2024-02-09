@@ -93,8 +93,11 @@ pub unsafe fn unmap_huge_page(page: Page<Size2MiB>) -> PhysFrame<Size2MiB> {
     PhysFrame::from_start_address(l2_entry.addr()).unwrap()
 }
 
-fn paddr(x: PhysAddr) -> VirtAddr {
+pub fn vaddr(x: PhysAddr) -> VirtAddr {
     VirtAddr::new(x.as_u64() + PHYS_OFFSET)
+}
+pub fn paddr(x: VirtAddr) -> PhysAddr {
+    PhysAddr::new(x.as_u64() -PHYS_OFFSET)
 }
 
 unsafe fn ensure_present(
@@ -107,7 +110,7 @@ unsafe fn ensure_present(
         if !pe.flags().contains(PageTableFlags::PRESENT) {
             assert!(pe.is_unused(), "unexpected page flags: {:?}", pe.flags());
             let new_frame = frame_allocator.allocate_frame().unwrap().start_address();
-            paddr(new_frame)
+            vaddr(new_frame)
                 .as_mut_ptr::<MaybeUninit<PageTable>>()
                 .write(MaybeUninit::zeroed());
             pe.set_addr(
