@@ -9,6 +9,7 @@ use rand::SeedableRng;
 use std::alloc::Layout;
 use std::ptr;
 use std::sync::{Arc, Mutex};
+use crossbeam_queue::ArrayQueue;
 use x86_64::structures::paging::mapper::{MapperFlushAll, UnmapError};
 use x86_64::structures::paging::{Mapper, Page, PageSize, PhysFrame, Size2MiB};
 use x86_64::VirtAddr;
@@ -27,7 +28,7 @@ struct GlobalData {
     allocs_per_page: PageMap,
     pages_per_quantum:
         SmallCountHashMap<u32, { VIRTUAL_QUANTUM_BITS + 1 - 21 }, 0, { 48 - VIRTUAL_QUANTUM_BITS }>,
-    available_frames: Mutex<Vec<PhysFrame<Size2MiB>>>,
+    available_frames: ArrayQueue<PhysFrame<Size2MiB>>,
     quantum_storage: QuantumStorage,
 }
 
@@ -136,8 +137,7 @@ unsafe impl TestAlloc for LocalData {
 
 impl LocalData {
     fn get_frames(&mut self, count: usize) -> Result<(), ()> {
-        self.available_frames
-            .steal_from_vec(&mut self.global.available_frames.lock().unwrap(), count)?;
+        self.available_frames.steal(&self.global.available_frames, count)?;
         Ok(())
     }
 
@@ -234,13 +234,12 @@ impl LocalData {
                 ((virt_area_start & ADDRESS_BIT_MASK) >> VIRTUAL_QUANTUM_BITS) as u32
                     ..((virt_area_end & ADDRESS_BIT_MASK) >> VIRTUAL_QUANTUM_BITS) as u32,
             ),
-            available_frames: Mutex::new(
-                phys_pages
-                    .into_iter()
-                    .map(|p| unsafe { page_table() }.translate_page(p).unwrap())
-                    .collect(),
-            ),
+            available_frames: ArrayQueue::new(phys_pages.count()),
         });
+
+        for p in phys_pages{
+            global.available_frames.push(unsafe { page_table() }.translate_page(p).unwrap()).unwrap()
+        }
 
         let ret = (0..threads)
             .map(|i| {
@@ -302,8 +301,7 @@ impl LocalData {
 
     fn release_frames(&mut self) {
         if !self.available_frames.is_empty() {
-            self.available_frames
-                .merge_into_vec(&mut self.global.available_frames.lock().unwrap());
+            self.available_frames.merge_into(& self.global.available_frames);
         }
     }
 

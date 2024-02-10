@@ -22,3 +22,4 @@ radium = "1.1.0"
 log = "0.4.20"
 array-init = "2.1.0"
 next-gen={version = "0.1.1",default-features = false}
+crossbeam-queue = "0.3.11"

@@ -3,6 +3,7 @@ use crate::paging::{paddr, vaddr};
 use std::mem::{size_of, MaybeUninit};
 use std::ptr;
 use std::ptr::{addr_of_mut, replace};
+use crossbeam_queue::ArrayQueue;
 use x86_64::structures::paging::{PageSize, PhysFrame, Size2MiB, Size4KiB};
 use x86_64::VirtAddr;
 
@@ -68,18 +69,24 @@ impl<S: PageSize, const C: usize> FrameList<S, C> {
         a
     }
 
-    pub fn merge_into_vec(&mut self, dst: &mut Vec<PhysFrame<S>>) {
+    pub fn merge_into(&mut self, dst: &ArrayQueue<PhysFrame<S>>) {
         while let Some(x) = self.pop() {
-            dst.push(x);
+            dst.push(x).unwrap();
         }
     }
 
-    pub fn steal_from_vec(&mut self, src: &mut Vec<PhysFrame<S>>, count: usize) -> Result<(), ()> {
+    pub fn steal(&mut self, src: &ArrayQueue<PhysFrame<S>>, count: usize) -> Result<(), ()> {
         if src.len() < count {
             return Err(());
         }
         for _ in 0..count {
-            self.push(src.pop().unwrap())
+            match src.pop(){
+                Some(x)=>self.push(x),
+                None=>{
+                    self.merge_into(src);
+                    return Err(())
+                }
+            }
         }
         Ok(())
     }
