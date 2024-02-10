@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-default=["small_hash_map_debug"]
+default=[]
 small_hash_map_debug =[]
 log_rust_global_alloc=[]
 
@@ -19,3 +19,4 @@ modular-bitfield = "0.11.2"
 tikv-jemallocator ="0.5.4"
 static_assertions = "1.1.0"
 radium = "1.1.0"
+log = "0.4.20"
