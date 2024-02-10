@@ -96,6 +96,7 @@ fn main() {
 }
 
 #[derive(Clone, Copy)]
+#[allow(dead_code)]
 enum AllocTestMode {
     None,
     First,
