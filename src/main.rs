@@ -27,7 +27,6 @@ pub mod myalloc;
 pub mod no_frame_allocator;
 pub mod page_map;
 pub mod paging;
-pub mod robin_hood;
 
 // from osv/libs/mman.cc
 const MAP_UNINITIALIZED: i32 = 0x4000000;
@@ -158,7 +157,7 @@ fn main() {
     let test_mode = AllocTestMode::First;
     let threads = 8;
     let phys_size = 4 * GB;
-    let virt_size = 1 * TB;
+    let virt_size = TB;
     let max_use = phys_size - phys_size / 4;
     let avg_alloc_size = 16 * MB;
     let alloc_per_thread = 100_000;

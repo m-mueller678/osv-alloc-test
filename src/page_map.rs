@@ -1,14 +1,14 @@
 use ahash::RandomState;
-use log::debug;
+
 use radium::marker::{Atomic, BitOps, NumericOps};
 use radium::{Atom, Radium};
-use std::collections::BTreeMap;
+
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::mem::size_of;
 use std::ops::{Shl, Shr};
 use std::sync::atomic::Ordering::Relaxed;
-use std::sync::Mutex;
+
 use std::thread::yield_now;
 use x86_64::structures::paging::{Page, PhysFrame, Size2MiB};
 use x86_64::PhysAddr;
@@ -131,7 +131,7 @@ impl<T: BetterAtom, const C: u32, const V: u32, const K: u32> SmallCountHashMap<
         }
     }
 
-    pub fn increment_at(&self, index: usize, k: T, amount: T) {
+    pub fn increment_at(&self, index: usize, _k: T, amount: T) {
         #[cfg(feature = "small_hash_map_debug")]
         let mut lock = self.lock.lock().unwrap();
         #[cfg(feature = "small_hash_map_debug")]
@@ -140,7 +140,7 @@ impl<T: BetterAtom, const C: u32, const V: u32, const K: u32> SmallCountHashMap<
             *x = *x + amount;
             *x - amount
         };
-        let old = self.slots[index].fetch_add(amount << (K + V), Relaxed);
+        let _old = self.slots[index].fetch_add(amount << (K + V), Relaxed);
         #[cfg(feature = "small_hash_map_debug")]
         {
             assert_eq!(old_debug_count, old >> (K + V));
@@ -353,7 +353,7 @@ fn test_rh() {
     const LIFETIME: u64 = SIZE - 1;
     const ITER: u64 = 20;
 
-    let mut rh = RhHash::<u64, 30>::new(SIZE as usize);
+    let rh = RhHash::<u64, 30>::new(SIZE as usize);
 
     for i in 0..(ITER * SIZE) {
         for j in 0..=LIFETIME.min(i) {
