@@ -22,6 +22,7 @@ pub trait BetterAtom:
     + From<u8>
     + Debug
     + Hash
+    + TryFrom<u64>
 {
 }
 
@@ -33,7 +34,8 @@ impl<
             + Shr<u32, Output = Self>
             + From<u8>
             + Debug
-            + Hash,
+            + Hash
+            + TryFrom<u64>,
     > BetterAtom for T
 {
 }
@@ -176,9 +178,16 @@ impl<T: BetterAtom, const K: u32> RhHash<T, K> {
         #[cfg(feature = "hash_map_debug")]
         let mut l = self.lock.lock().unwrap();
 
+        if Some(k) == T::try_from(69221597).ok().map(|x| x & mask::<T>(K)) {
+            eprintln!("update");
+        }
+
         debug_assert!(k | mask(K) == mask(K));
         let mut fa = |x: T| {
             let r = f(x);
+            if Some(k) == T::try_from(69221597).ok().map(|x| x & mask::<T>(K)) {
+                eprintln!("{:08x?} -> {:08x?}", x, r.1);
+            }
             debug_assert!(r.1 & mask(K) == k);
             debug_assert!(r.1 & Self::l_mask() == T::from(0));
             r
@@ -193,13 +202,11 @@ impl<T: BetterAtom, const K: u32> RhHash<T, K> {
                 Self::do_yield();
                 continue;
             }
-            if peeked & mask(K) == k {
+            if peeked != T::from(0) && peeked & mask(K) == k {
                 #[cfg(feature = "hash_map_debug")]
                 assert_eq!(l.get(&k), Some(&peeked));
                 let (ret, new) = fa(peeked);
                 if new & Self::v_mask() == T::from(0) {
-                    #[cfg(feature = "hash_map_debug")]
-                    l.remove(&k);
                     match self.slots[scan_slot].compare_exchange_weak(
                         peeked,
                         Self::l_mask(),
@@ -207,6 +214,8 @@ impl<T: BetterAtom, const K: u32> RhHash<T, K> {
                         Relaxed,
                     ) {
                         Ok(_) => {
+                            #[cfg(feature = "hash_map_debug")]
+                            l.remove(&k);
                             self.unlock_range(target_slot, scan_slot);
                             self.remove(scan_slot);
                             return ret;
@@ -214,11 +223,11 @@ impl<T: BetterAtom, const K: u32> RhHash<T, K> {
                         Err(_) => continue,
                     }
                 } else {
-                    #[cfg(feature = "hash_map_debug")]
-                    l.insert(k, new);
                     match self.slots[scan_slot].compare_exchange_weak(peeked, new, Relaxed, Relaxed)
                     {
                         Ok(_) => {
+                            #[cfg(feature = "hash_map_debug")]
+                            l.insert(k, new);
                             self.unlock_range(target_slot, scan_slot);
                             return ret;
                         }
@@ -233,10 +242,11 @@ impl<T: BetterAtom, const K: u32> RhHash<T, K> {
                     self.unlock_range(target_slot, scan_slot);
                     return ret;
                 } else {
-                    l.insert(k, new);
                     match self.slots[scan_slot].compare_exchange_weak(peeked, new, Relaxed, Relaxed)
                     {
                         Ok(_) => {
+                            #[cfg(feature = "hash_map_debug")]
+                            l.insert(k, new);
                             self.unlock_range(target_slot, scan_slot);
                             return ret;
                         }
@@ -298,6 +308,12 @@ impl<T: BetterAtom, const K: u32> RhHash<T, K> {
                         .is_ok()
                     {
                         self.remove(i);
+                        if Some(peek & mask(K))
+                            == T::try_from(69221597).ok().map(|x| x & mask::<T>(K))
+                        {
+                            dbg!(i, &self.slots[i].load(Relaxed));
+                            eprintln!("remove any");
+                        }
                         #[cfg(feature = "hash_map_debug")]
                         assert_eq!(l.remove(&(peek & mask::<T>(K))), Some(peek));
                         return peek;
@@ -430,8 +446,13 @@ impl<T: BetterAtom, const K: u32> RhHash<T, K> {
                 may_stop = true;
             }
             if peek_lock == T::from(0) {
-                this.unlock_range(locked_from, ni);
-                locked_from = ni;
+                while locked_from != ni {
+                    debug_assert!(
+                        this.slots[locked_from].load(Relaxed) & Self::l_mask() != T::from(0)
+                    );
+                    this.slots[locked_from].store(T::from(0), Relaxed);
+                    locked_from = this.next(locked_from);
+                }
                 i = ni;
                 if may_stop {
                     return None;
@@ -439,6 +460,10 @@ impl<T: BetterAtom, const K: u32> RhHash<T, K> {
             } else {
                 #[cfg(feature = "hash_map_debug")]
                 assert!(l.remove(&(peek_lock & mask::<T>(K))) == Some(peek_lock));
+                if Some(peek_lock & mask(K)) == T::try_from(69221597).ok().map(|x| x & mask::<T>(K))
+                {
+                    eprintln!("drain");
+                }
                 yield_!(peek_lock);
                 i = ni;
             }
