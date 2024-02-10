@@ -1,7 +1,6 @@
 #![allow(clippy::result_unit_err)]
 #![allow(clippy::missing_safety_doc)]
 
-use crate::myalloc::LocalData;
 use libc::*;
 use rand::distributions::Uniform;
 use rand::prelude::*;
@@ -14,22 +13,11 @@ use std::sync::Barrier;
 use std::thread::scope;
 use std::time::Instant;
 use tikv_jemallocator::Jemalloc;
-use util::{GB, MB, TB};
+use virtual_alloc::myalloc::LocalData;
+use virtual_alloc::util::{GB, MB, TB};
+use virtual_alloc::TestAlloc;
 
-pub mod buddymap;
-pub mod frame_allocator;
-pub mod frame_list;
 pub mod log_alloc;
-pub mod myalloc;
-pub mod no_frame_allocator;
-pub mod page_map;
-pub mod paging;
-pub mod util;
-
-unsafe trait TestAlloc: Send {
-    unsafe fn alloc(&mut self, layout: Layout) -> *mut u8;
-    unsafe fn dealloc(&mut self, ptr: *mut u8, layout: Layout);
-}
 
 #[derive(Clone)]
 struct LibCAlloc;
@@ -41,16 +29,6 @@ unsafe impl TestAlloc for LibCAlloc {
 
     unsafe fn dealloc(&mut self, ptr: *mut u8, _layout: Layout) {
         free(ptr as *mut c_void)
-    }
-}
-
-unsafe impl TestAlloc for Jemalloc {
-    unsafe fn alloc(&mut self, layout: Layout) -> *mut u8 {
-        GlobalAlloc::alloc(self, layout)
-    }
-
-    unsafe fn dealloc(&mut self, ptr: *mut u8, layout: Layout) {
-        GlobalAlloc::dealloc(self, ptr, layout)
     }
 }
 

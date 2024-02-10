@@ -9,6 +9,7 @@ use ahash::RandomState;
 use rand::rngs::SmallRng;
 use rand::SeedableRng;
 use std::alloc::Layout;
+use std::ops::Deref;
 use std::ptr;
 use std::sync::{Arc, Mutex};
 use x86_64::structures::paging::mapper::{MapperFlushAll, UnmapError};
@@ -25,7 +26,7 @@ fn address_to_quantum(a: VirtAddr) -> u32 {
 
 mod quantum_storage;
 
-struct GlobalData {
+pub struct GlobalData {
     allocs_per_page: PageMap,
     pages_per_quantum:
         SmallCountHashMap<u32, { VIRTUAL_QUANTUM_BITS + 1 - 21 }, 0, { 48 - VIRTUAL_QUANTUM_BITS }>,
@@ -52,9 +53,81 @@ impl GlobalData {
             self.quantum_storage.dealloc_dirty(0, q)
         }
     }
+
+    pub fn new(physical_size: usize, virt_size: usize) -> Self {
+        assert_eq!(physical_size % Size2MiB::SIZE as usize, 0);
+        assert_eq!(virt_size % (1 << VIRTUAL_QUANTUM_BITS), 0);
+        assert!(virt_size <= 1 << 46);
+
+        let phys_pages = alloc_mmap::<Size2MiB>(physical_size / Size2MiB::SIZE as usize, false);
+        for p in phys_pages {
+            unsafe {
+                p.start_address().as_mut_ptr::<u8>().write(0);
+            }
+        }
+        // these must be quantum aligned
+        let virt_area_start = 1u64 << 47;
+        let virt_area_end = virt_area_start + virt_size as u64;
+
+        let virt_pages = Page::range(
+            Page::containing_address(VirtAddr::new(virt_area_start)),
+            Page::containing_address(VirtAddr::new(virt_area_end)),
+        );
+        println!("allocating l2 tables");
+        unsafe {
+            let mut frame_allocator = MmapFrameAllocator::default();
+            allocate_l2_tables(
+                Page::range_inclusive(virt_pages.start, virt_pages.end - 1),
+                &mut frame_allocator,
+            );
+        }
+        println!("unmapping virtual range pages");
+        {
+            let _pt = unsafe { page_table() };
+            for (i, p) in virt_pages.into_iter().enumerate() {
+                if cfg!(debug_assertions) && i % (1 << 18) == 0 {
+                    eprintln!(
+                        "{i:8}/{:8} (({:.2})%)",
+                        virt_pages.count(),
+                        i as f64 / virt_pages.count() as f64 * 100.0
+                    );
+                }
+                match unsafe { page_table() }.unmap(p) {
+                    Ok((f, flush)) => {
+                        println!("unmapped {f:?} from virtual range");
+                        flush.ignore();
+                    }
+                    Err(UnmapError::PageNotMapped) => {
+                        continue;
+                    }
+                    Err(e) => panic!("cannot unmap {p:?} in virtual range: {e:?}"),
+                }
+            }
+            MapperFlushAll::new().flush_all();
+        }
+        println!("unmapping complete");
+
+        GlobalData {
+            allocs_per_page: PageMap::new(
+                phys_pages.count() + phys_pages.count() / 4,
+                virt_pages.start,
+            ),
+            pages_per_quantum: SmallCountHashMap::with_num_slots(1 << 16),
+            quantum_storage: QuantumStorage::from_range(
+                ((virt_area_start & ADDRESS_BIT_MASK) >> VIRTUAL_QUANTUM_BITS) as u32
+                    ..((virt_area_end & ADDRESS_BIT_MASK) >> VIRTUAL_QUANTUM_BITS) as u32,
+            ),
+            available_frames: Mutex::new(
+                phys_pages
+                    .into_iter()
+                    .map(|p| unsafe { page_table() }.translate_page(p).unwrap())
+                    .collect(),
+            ),
+        }
+    }
 }
 
-pub struct LocalData {
+pub struct LocalData<G: Deref<Target = GlobalData> + Send> {
     rng: SmallRng,
     available_frames: FrameList2M,
     // these are sign extended virtual addresses. be careful around the half of the address space
@@ -63,10 +136,10 @@ pub struct LocalData {
     current_page_index: usize,
     current_page: Page<Size2MiB>,
     current_quantum_index: usize,
-    global: Arc<GlobalData>,
+    global: G,
 }
 
-unsafe impl TestAlloc for LocalData {
+unsafe impl<G: Deref<Target = GlobalData> + Send> TestAlloc for LocalData<G> {
     unsafe fn alloc(&mut self, layout: Layout) -> *mut u8 {
         if layout.size() == 0 {
             return VirtAddr::new(PHYS_OFFSET).as_mut_ptr();
@@ -136,7 +209,7 @@ unsafe impl TestAlloc for LocalData {
     }
 }
 
-impl LocalData {
+impl<G: Deref<Target = GlobalData> + Send> LocalData<G> {
     fn get_frames(&mut self, count: usize) -> Result<(), ()> {
         self.available_frames
             .steal_from_vec(&mut self.global.available_frames.lock().unwrap(), count)?;
@@ -173,97 +246,19 @@ impl LocalData {
         first_page.start_address().as_mut_ptr()
     }
 
-    pub fn create(threads: usize, physical_size: usize, virt_size: usize) -> Vec<Self> {
-        assert_eq!(physical_size % Size2MiB::SIZE as usize, 0);
-        assert_eq!(virt_size % (1 << VIRTUAL_QUANTUM_BITS), 0);
-        assert!(virt_size <= 1 << 46);
-
-        let phys_pages = alloc_mmap::<Size2MiB>(physical_size / Size2MiB::SIZE as usize, false);
-        for p in phys_pages {
-            unsafe {
-                p.start_address().as_mut_ptr::<u8>().write(0);
-            }
-        }
-        // these must be quantum aligned
-        let virt_area_start = 1u64 << 47;
-        let virt_area_end = virt_area_start + virt_size as u64;
-
-        let virt_pages = Page::range(
-            Page::containing_address(VirtAddr::new(virt_area_start)),
-            Page::containing_address(VirtAddr::new(virt_area_end)),
-        );
-        println!("allocating l2 tables");
-        unsafe {
-            let mut frame_allocator = MmapFrameAllocator::default();
-            allocate_l2_tables(
-                Page::range_inclusive(virt_pages.start, virt_pages.end - 1),
-                &mut frame_allocator,
-            );
-        }
-        println!("unmapping virtual range pages");
-        {
-            let _pt = unsafe { page_table() };
-            for (i, p) in virt_pages.into_iter().enumerate() {
-                if cfg!(debug_assertions) && i % (1 << 18) == 0 {
-                    eprintln!(
-                        "{i:8}/{:8} (({:.2})%)",
-                        virt_pages.count(),
-                        i as f64 / virt_pages.count() as f64 * 100.0
-                    );
-                }
-                match unsafe { page_table() }.unmap(p) {
-                    Ok((f, flush)) => {
-                        println!("unmapped {f:?} from virtual range");
-                        flush.ignore();
-                    }
-                    Err(UnmapError::PageNotMapped) => {
-                        continue;
-                    }
-                    Err(e) => panic!("cannot unmap {p:?} in virtual range: {e:?}"),
-                }
-            }
-            MapperFlushAll::new().flush_all();
-        }
-        println!("unmapping complete");
-
-        let global = Arc::new(GlobalData {
-            allocs_per_page: PageMap::new(
-                phys_pages.count() + phys_pages.count() / 4,
-                virt_pages.start,
-            ),
-            pages_per_quantum: SmallCountHashMap::with_num_slots(1 << 16),
-            quantum_storage: QuantumStorage::from_range(
-                ((virt_area_start & ADDRESS_BIT_MASK) >> VIRTUAL_QUANTUM_BITS) as u32
-                    ..((virt_area_end & ADDRESS_BIT_MASK) >> VIRTUAL_QUANTUM_BITS) as u32,
-            ),
-            available_frames: Mutex::new(
-                phys_pages
-                    .into_iter()
-                    .map(|p| unsafe { page_table() }.translate_page(p).unwrap())
-                    .collect(),
-            ),
-        });
-
-        let ret = (0..threads)
-            .map(|i| {
-                let mut r = LocalData {
-                    rng: SmallRng::seed_from_u64(
-                        RandomState::with_seed(0xee61096f95490820).hash_one(i),
-                    ),
-                    available_frames: Default::default(),
-                    min_address: 1u64 << 40,
-                    bump: 1 << 40,
-                    current_page_index: usize::MAX,
-                    current_quantum_index: usize::MAX,
-                    current_page: Page::containing_address(VirtAddr::new(1 << 40)),
-                    global: global.clone(),
-                };
-                r.claim_quantum().unwrap();
-                r
-            })
-            .collect();
-        println!("allocator constructed");
-        ret
+    pub fn new(seed: u64, global: G) -> Result<Self, ()> {
+        let mut r = LocalData {
+            rng: SmallRng::seed_from_u64(RandomState::with_seed(0xee61096f95490820).hash_one(seed)),
+            available_frames: Default::default(),
+            min_address: 1u64 << 40,
+            bump: 1 << 40,
+            current_page_index: usize::MAX,
+            current_quantum_index: usize::MAX,
+            current_page: Page::containing_address(VirtAddr::new(1 << 40)),
+            global,
+        };
+        r.claim_quantum()?;
+        Ok(r)
     }
 
     fn claim_quantum(&mut self) -> Result<(), ()> {
