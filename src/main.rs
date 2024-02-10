@@ -120,6 +120,15 @@ fn test_alloc<A: TestAlloc>(
     mode: AllocTestMode,
     allocs: &mut [A],
 ) {
+    for _ in 0..1_000_000_000 {
+        let l = Layout::from_size_align(128, 8).unwrap();
+        unsafe {
+            let p = allocs[0].alloc(l);
+            allocs[0].dealloc(p, l);
+        }
+    }
+    return;
+
     fn layout(l: usize) -> Layout {
         Layout::from_size_align(l * size_of::<usize>(), align_of::<usize>()).unwrap()
     }

@@ -2,12 +2,12 @@
 module: hello_release hello_debug virtual_alloc_c
 
 hello_release: FORCE
-	cargo build --release
-	cp target/release/alloc_test hello_release
+	cargo build --bin virtual_alloc --release --features tikv-jemallocator
+	cp target/release/virtual_alloc hello_release
 
 hello_debug: FORCE
-	cargo build
-	cp target/debug/alloc_test hello_debug
+	cargo build --bin virtual_alloc --features tikv-jemallocator
+	cp target/debug/virtual_alloc hello_debug
 
 check_fmt:
 	cargo fmt
