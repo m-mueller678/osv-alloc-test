@@ -1,31 +1,21 @@
 use crate::myalloc::{GlobalData, LocalData};
 use crate::TestAlloc;
-use libc::abort;
-use once_cell::unsync::Lazy;
-use static_assertions::{assert_eq_align, assert_eq_size, assert_type_eq_all};
-use std::alloc::{GlobalAlloc, Layout};
-use std::cell::OnceCell;
+use static_assertions::{assert_eq_align, assert_eq_size};
+use std::alloc::Layout;
 use std::mem::MaybeUninit;
 use std::panic::{catch_unwind, UnwindSafe};
-use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Once};
 
 type PtrLocalData = LocalData<&'static GlobalData>;
 
 assert_eq_align!(PtrLocalData, [u64; 11]);
 assert_eq_size!(PtrLocalData, [u64; 11]);
 
-assert_eq_align!(GlobalData, [u64; 409]);
-assert_eq_size!(GlobalData, [u64; 409]);
+static mut GLOBAL: MaybeUninit<GlobalData> = MaybeUninit::uninit();
 
 #[no_mangle]
-pub unsafe extern "C" fn virtual_alloc_init_global(
-    dst: *mut GlobalData,
-    physical_size: u64,
-    virtual_size: u64,
-) {
+pub unsafe extern "C" fn virtual_alloc_init_global(physical_size: u64, virtual_size: u64) {
     catch(|| {
-        dst.write(GlobalData::new(
+        GLOBAL.write(GlobalData::new(
             physical_size as usize,
             virtual_size as usize,
         ));
@@ -33,12 +23,8 @@ pub unsafe extern "C" fn virtual_alloc_init_global(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn virtual_alloc_create_handle(
-    dst: *mut PtrLocalData,
-    global: *const GlobalData,
-    seed: u64,
-) -> bool {
-    catch(|| match LocalData::new(seed, &*global) {
+pub unsafe extern "C" fn virtual_alloc_create_handle(dst: *mut PtrLocalData, seed: u64) -> bool {
+    catch(|| match LocalData::new(seed, GLOBAL.assume_init_ref()) {
         Ok(x) => {
             dst.write(x);
             true

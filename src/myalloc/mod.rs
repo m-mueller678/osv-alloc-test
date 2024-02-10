@@ -11,7 +11,7 @@ use rand::SeedableRng;
 use std::alloc::Layout;
 use std::ops::Deref;
 use std::ptr;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use x86_64::structures::paging::mapper::{MapperFlushAll, UnmapError};
 use x86_64::structures::paging::{Mapper, Page, PageSize, PhysFrame, Size2MiB};
 use x86_64::VirtAddr;

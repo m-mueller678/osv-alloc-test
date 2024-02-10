@@ -5,15 +5,15 @@ use libc::*;
 use rand::distributions::Uniform;
 use rand::prelude::*;
 use rand::rngs::SmallRng;
-use std::alloc::{GlobalAlloc, Layout};
+use std::alloc::Layout;
 use std::collections::VecDeque;
 use std::mem::{align_of, size_of, MaybeUninit};
 use std::ops::Range;
-use std::sync::Barrier;
+use std::sync::{Arc, Barrier};
 use std::thread::scope;
 use std::time::Instant;
 use tikv_jemallocator::Jemalloc;
-use virtual_alloc::myalloc::LocalData;
+use virtual_alloc::myalloc::{GlobalData, LocalData};
 use virtual_alloc::util::{GB, MB, TB};
 use virtual_alloc::TestAlloc;
 
@@ -69,13 +69,12 @@ fn main() {
         println!("{alloc}:");
         match alloc.as_str() {
             "ours" => {
-                test_alloc(
-                    alloc_per_thread,
-                    avg_alloc_size,
-                    max_use,
-                    test_mode,
-                    &mut LocalData::create(threads, phys_size, virt_size),
-                );
+                test_alloc(alloc_per_thread, avg_alloc_size, max_use, test_mode, &mut {
+                    let global = Arc::new(GlobalData::new(phys_size, virt_size));
+                    (0..threads as u64)
+                        .map(|i| LocalData::new(i, global.clone()).unwrap())
+                        .collect::<Vec<_>>()
+                });
             }
             "jemalloc" => test_alloc(
                 alloc_per_thread,

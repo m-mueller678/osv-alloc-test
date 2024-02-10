@@ -1,5 +1,4 @@
 use std::alloc::Layout;
-use std::mem::MaybeUninit;
 
 pub mod buddymap;
 pub mod frame_allocator;
