@@ -1,37 +1,40 @@
+use crate::mask;
+use crate::page_map::RhHash;
+use next_gen::mk_gen;
 use rand::Rng;
-use std::collections::btree_map::Entry;
-use std::collections::BTreeMap;
-use std::mem::take;
 use std::ops::Range;
-use std::sync::Mutex;
 use x86_64::structures::paging::mapper::MapperFlushAll;
 
-#[derive(Default)]
+const QUANTUM_ID_BITS: u32 = 27;
+const TRANSFER_BUFFER_LEVEL_BITS: u32 = 32 - QUANTUM_ID_BITS;
+const PAIR_KEY_BITS: u32 = QUANTUM_ID_BITS - 1;
 pub struct BuddyMap {
-    pairs: Mutex<BTreeMap<u32, bool>>,
+    pairs: RhHash<u32, PAIR_KEY_BITS>,
 }
+const BUDDY_MASK: u32 = 3u32 << PAIR_KEY_BITS;
 
 impl BuddyMap {
-    pub fn insert(&self, buddy: u32) -> bool {
-        match self.pairs.lock().unwrap().entry(buddy / 2) {
-            Entry::Occupied(x) => {
-                debug_assert!(*x.get() as u32 != buddy % 2);
-                x.remove();
-                true
-            }
-            Entry::Vacant(x) => {
-                x.insert(buddy % 2 != 0);
-                false
-            }
+    pub fn new(slot_count: usize) -> Self {
+        BuddyMap {
+            pairs: RhHash::new(slot_count.max(2)),
         }
     }
+    pub fn insert(&self, buddy: u32) -> bool {
+        self.pairs.update(buddy / 32, |x| {
+            if BUDDY_MASK & x == 0 {
+                (false, x | 1 << (PAIR_KEY_BITS + buddy % 2))
+            } else {
+                (true, x & !BUDDY_MASK)
+            }
+        })
+    }
 
-    pub fn remove(&self, _rng: &mut impl Rng) -> Option<u32> {
-        self.pairs
-            .lock()
-            .unwrap()
-            .pop_first()
-            .map(|x| x.0 << 1 | x.1 as u32)
+    pub fn remove(&self, rng: &mut impl Rng) -> Option<u32> {
+        let x = self.pairs.remove_any(rng, 128);
+        if x == 0 {
+            return None;
+        }
+        Some(x & mask::<u32>(PAIR_KEY_BITS))
     }
 }
 
@@ -39,20 +42,16 @@ pub struct BuddyTower<const H: usize> {
     maps: [BuddyMap; H],
 }
 
-impl<const H: usize> Default for BuddyTower<H> {
-    fn default() -> Self {
+impl<const H: usize> BuddyTower<H> {
+    pub fn new(quantum_count: usize) -> Self {
+        assert!(H < (1usize << TRANSFER_BUFFER_LEVEL_BITS));
+        dbg!(quantum_count);
+        let l0_slots = (quantum_count / 2).next_power_of_two();
         BuddyTower {
-            maps: (0..H)
-                .map(|_| BuddyMap::default())
-                .collect::<Vec<_>>()
-                .try_into()
-                .map_err(|_| ())
-                .unwrap(),
+            maps: array_init::array_init(|i| BuddyMap::new(l0_slots >> i)),
         }
     }
-}
 
-impl<const H: usize> BuddyTower<H> {
     pub fn insert(&self, mut level: u32, first_quantum: u32) {
         debug_assert!(first_quantum % (1 << level) == 0);
         while self.maps[level as usize].insert(first_quantum >> level) {
@@ -85,8 +84,9 @@ impl<const H: usize> BuddyTower<H> {
     }
 
     pub fn from_range(range: Range<u32>) -> Self {
+        assert!((range.end - 1) < (1u32 << QUANTUM_ID_BITS));
         dbg!(&range);
-        let ret = Self::default();
+        let ret = Self::new(range.len());
         for x in range {
             ret.insert(0, x);
         }
@@ -95,23 +95,37 @@ impl<const H: usize> BuddyTower<H> {
 
     pub fn print_counts(&self) {
         for (i, l) in self.maps.iter().enumerate() {
-            print!("{i:2}:{:4}, ", l.pairs.lock().unwrap().len())
+            print!("{i:2}:{:4}, ", l.pairs.count())
         }
         println!();
     }
 
-    pub fn steal_all_and_flush(&self, other: &Self) {
-        let stolen: Vec<_> = other
-            .maps
-            .iter()
-            .map(|x| take(&mut *x.pairs.lock().unwrap()))
-            .collect();
-        MapperFlushAll::new().flush_all();
-        assert_eq!(stolen.len(), H);
-        for (level, buddies) in stolen.into_iter().enumerate() {
-            for b in buddies {
-                self.insert(level as u32, (b.0 << 1 | b.1 as u32) << level)
+    pub fn steal_all_and_flush(&self, other: &Self, transfer_buffer: &mut Vec<u32>) {
+        debug_assert!(transfer_buffer.is_empty());
+        for l in 0..H {
+            let gen_fn = RhHash::drain;
+            mk_gen!(let gen=gen_fn(&other.maps[l].pairs));
+            for x in gen {
+                if transfer_buffer.len() == transfer_buffer.capacity() {
+                    self.insert_transfer_vector(transfer_buffer);
+                }
+                let is_high = (x >> (1 + PAIR_KEY_BITS)) & 1;
+                let key = x & mask::<u32>(PAIR_KEY_BITS);
+                let quantum_id = (key << 1 | is_high) << l;
+                let transfer_encoded = (l as u32) << QUANTUM_ID_BITS | quantum_id;
+                transfer_buffer.push(transfer_encoded);
             }
         }
+        self.insert_transfer_vector(transfer_buffer);
+    }
+
+    fn insert_transfer_vector(&self, transfer_buffer: &mut Vec<u32>) {
+        if transfer_buffer.capacity() == transfer_buffer.len() {
+            MapperFlushAll::new().flush_all();
+        }
+        for x in &mut *transfer_buffer {
+            self.insert(*x >> QUANTUM_ID_BITS, *x & mask::<u32>(QUANTUM_ID_BITS))
+        }
+        transfer_buffer.clear()
     }
 }

@@ -1,4 +1,8 @@
+#![allow(clippy::result_unit_err)]
+#![allow(clippy::missing_safety_doc)]
+
 use crate::myalloc::LocalData;
+use crate::page_map::BetterAtom;
 use libc::*;
 use rand::distributions::Uniform;
 use rand::prelude::*;
@@ -154,13 +158,14 @@ fn main() {
         allocs = vec!["libc".into(), "jemalloc".into(), "ours".into()]
     }
 
+    // 1.664e5, 1.519e5, 1.524e5
     let test_mode = AllocTestMode::First;
-    let threads = 8;
-    let phys_size = 4 * GB;
+    let threads = 16;
+    let phys_size = 8 * GB;
     let virt_size = TB;
     let max_use = phys_size - phys_size / 4;
     let avg_alloc_size = 16 * MB;
-    let alloc_per_thread = 100_000;
+    let alloc_per_thread = 1_000_000;
 
     for alloc in allocs {
         println!("{alloc}:");
@@ -305,4 +310,8 @@ fn test_alloc<A: TestAlloc>(
         "complete. {:.3e} alloc/s/thread",
         allocs_per_thread as f64 / duration.as_secs_f64()
     );
+}
+
+fn mask<T: BetterAtom>(bits: u32) -> T {
+    (T::from(1) << bits) - T::from(1)
 }

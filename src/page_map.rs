@@ -1,14 +1,14 @@
 use ahash::RandomState;
-
 use radium::marker::{Atomic, BitOps, NumericOps};
 use radium::{Atom, Radium};
-
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::mem::size_of;
 use std::ops::{Shl, Shr};
 use std::sync::atomic::Ordering::Relaxed;
-
+use next_gen::generator;
+use rand::prelude::*;
+use rand::Rng;
 use std::thread::yield_now;
 use x86_64::structures::paging::{Page, PhysFrame, Size2MiB};
 use x86_64::PhysAddr;
@@ -38,12 +38,8 @@ impl<
 {
 }
 
-fn mask<T: BetterAtom>(bits: u32) -> T {
-    (T::from(1) << bits) - T::from(1)
-}
-
 fn check_width(val: impl BetterAtom, bits: u32) {
-    debug_assert!(val | mask(bits) == mask(bits));
+    debug_assert!(val | crate::mask(bits) == crate::mask(bits));
 }
 
 pub struct SmallCountHashMap<T: BetterAtom, const C: u32, const V: u32, const K: u32> {
@@ -75,13 +71,13 @@ impl<T: BetterAtom, const C: u32, const V: u32, const K: u32> SmallCountHashMap<
         let mut i = self.target_slot(k);
         loop {
             let found = self.slots[i].load(Relaxed);
-            if (found >> (K + V)) != T::from(0) && (found & mask(K)) == k {
+            if (found >> (K + V)) != T::from(0) && (found & crate::mask(K)) == k {
                 let old_val = self.slots[i].fetch_sub(T::from(1) << (K + V), Relaxed);
                 let old_count = old_val >> (K + V);
                 #[cfg(feature = "small_hash_map_debug")]
                 assert_eq!(old_count, debug.1);
                 let ret = if old_count == T::from(1) {
-                    let v = (old_val >> K) & mask(V);
+                    let v = (old_val >> K) & crate::mask(V);
                     #[cfg(feature = "small_hash_map_debug")]
                     assert_eq!(v, debug.0);
                     Some(v)
@@ -144,7 +140,7 @@ impl<T: BetterAtom, const C: u32, const V: u32, const K: u32> SmallCountHashMap<
         #[cfg(feature = "small_hash_map_debug")]
         {
             assert_eq!(old_debug_count, old >> (K + V));
-            assert_eq!(k, old & mask(K));
+            assert_eq!(k, old & crate::mask(K));
         }
     }
 
@@ -163,7 +159,7 @@ impl<T: BetterAtom, const K: u32> RhHash<T, K> {
     pub fn new(slot_count: usize) -> Self {
         assert!(slot_count.is_power_of_two());
         RhHash {
-            index_mask: slot_count - 1,
+            index_mask: slot_count.saturating_sub(1),
             slots: (0..slot_count)
                 .map(|_| Atom::<T>::new(T::from(0)))
                 .collect(),
@@ -171,10 +167,10 @@ impl<T: BetterAtom, const K: u32> RhHash<T, K> {
         }
     }
     pub fn update<A, F: FnMut(T) -> (A, T)>(&self, k: T, mut f: F) -> A {
-        debug_assert!(k | mask(K) == mask(K));
+        debug_assert!(k | crate::mask(K) == crate::mask(K));
         let mut fa = |x: T| {
             let r = f(x);
-            debug_assert!(r.1 & mask(K) == k);
+            debug_assert!(r.1 & crate::mask(K) == k);
             debug_assert!(r.1 & Self::l_mask() == T::from(0));
             r
         };
@@ -188,7 +184,7 @@ impl<T: BetterAtom, const K: u32> RhHash<T, K> {
                 Self::do_yield();
                 continue;
             }
-            if peeked & mask(K) == k {
+            if peeked & crate::mask(K) == k {
                 let (ret, new) = fa(peeked);
                 if new & Self::v_mask() == T::from(0) {
                     match self.slots[scan_slot].compare_exchange_weak(
@@ -235,7 +231,7 @@ impl<T: BetterAtom, const K: u32> RhHash<T, K> {
                     Self::do_yield();
                     continue;
                 }
-                let other_psl = self.psl(self.target_slot(peek_locked & mask(K)), scan_slot);
+                let other_psl = self.psl(self.target_slot(peek_locked & crate::mask(K)), scan_slot);
                 if self_psl > other_psl {
                     let (ret, new) = fa(k);
                     if new & Self::v_mask() != T::from(0) {
@@ -260,6 +256,34 @@ impl<T: BetterAtom, const K: u32> RhHash<T, K> {
         }
     }
 
+    pub fn remove_any(&self, rng: &mut impl Rng, mut max_scan: usize) -> T {
+        loop {
+            let mut i = rng.gen::<usize>() & self.index_mask;
+            loop {
+                if max_scan == 0 {
+                    return T::from(0);
+                }
+                max_scan -= 1;
+                let peek = self.slots[i].load(Relaxed);
+                if peek != T::from(0) {
+                    if peek & Self::l_mask() != T::from(0) {
+                        break;
+                    }
+                    if self.slots[i]
+                        .compare_exchange_weak(peek, Self::l_mask(), Relaxed, Relaxed)
+                        .is_ok()
+                    {
+                        self.remove(i);
+                        return peek;
+                    } else {
+                        break;
+                    }
+                }
+                i = self.next(i)
+            }
+        }
+    }
+
     fn do_yield() {
         yield_now();
     }
@@ -276,7 +300,7 @@ impl<T: BetterAtom, const K: u32> RhHash<T, K> {
                 self.unlock_range(unlock_from, i);
                 return;
             }
-            let other_psl = self.psl(self.target_slot(peek_locked & mask(K)), i);
+            let other_psl = self.psl(self.target_slot(peek_locked & crate::mask(K)), i);
             if psl > other_psl {
                 self.slots[i].store(Self::l_mask() | displaced, Relaxed);
                 displaced = peek_locked;
@@ -292,7 +316,7 @@ impl<T: BetterAtom, const K: u32> RhHash<T, K> {
     }
 
     fn v_mask() -> T {
-        mask::<T>(Self::bits() - K - 1) << K
+        crate::mask::<T>(Self::bits() - K - 1) << K
     }
 
     fn l_mask() -> T {
@@ -311,17 +335,21 @@ impl<T: BetterAtom, const K: u32> RhHash<T, K> {
     fn remove(&self, mut i: usize) {
         loop {
             let ni = self.next(i);
-            let peek = self.slots[i].load(Relaxed);
+            let peek = self.slots[ni].load(Relaxed);
             if peek == T::from(0) {
                 self.slots[i].store(T::from(0), Relaxed);
                 return;
+            }
+            if peek & Self::l_mask() != T::from(0) {
+                Self::do_yield();
+                continue;
             }
             let next_locked = self.slots[ni].fetch_or(Self::l_mask(), Relaxed);
             if next_locked & Self::l_mask() != T::from(0) {
                 Self::do_yield();
                 continue;
             }
-            if self.target_slot(next_locked & mask(K)) == ni {
+            if next_locked == T::from(0) || self.target_slot(next_locked & crate::mask(K)) == ni {
                 self.slots[i].store(T::from(0), Relaxed);
                 self.slots[ni].fetch_and(!Self::l_mask(), Relaxed);
                 return;
@@ -337,12 +365,54 @@ impl<T: BetterAtom, const K: u32> RhHash<T, K> {
     }
 
     fn target_slot(&self, k: T) -> usize {
-        debug_assert!(k | mask(K) == mask(K));
+        debug_assert!(k | crate::mask(K) == crate::mask(K));
         self.random_state.hash_one(k) as usize & self.index_mask
     }
 
     fn psl(&self, target_slot: usize, slot: usize) -> usize {
         slot.wrapping_sub(target_slot) & self.index_mask
+    }
+
+    pub fn count(&self) -> usize {
+        self.slots
+            .iter()
+            .filter(|x| x.load(Relaxed) & !Self::l_mask() != T::from(0))
+            .count()
+    }
+
+    // pub fn drain(&self)->impl '_+Iterator<Item=u32>{
+    //     let generator = Self::drain_inner;
+    //     mk_gen!(let x=generator(self));
+    //     x
+    // }
+
+    #[generator(yield(T))]
+    pub fn drain(this: &Self) -> Option<T> {
+        let mut locked_from = 0;
+        let mut i = 0;
+        let mut may_stop = false;
+        loop {
+            let peek_lock = this.slots[i].fetch_or(Self::l_mask(), Relaxed);
+            if peek_lock & Self::l_mask() != T::from(0) {
+                Self::do_yield();
+                continue;
+            }
+            let ni = this.next(i);
+            if ni == 0 {
+                may_stop = true;
+            }
+            if peek_lock == T::from(0) {
+                this.unlock_range(locked_from, ni);
+                locked_from = ni;
+                i = ni;
+                if may_stop {
+                    return None;
+                }
+            } else {
+                yield_!(peek_lock);
+                i = ni;
+            }
+        }
     }
 }
 

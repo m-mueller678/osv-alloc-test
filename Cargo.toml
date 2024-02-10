@@ -20,3 +20,5 @@ tikv-jemallocator ="0.5.4"
 static_assertions = "1.1.0"
 radium = "1.1.0"
 log = "0.4.20"
+array-init = "2.1.0"
+next-gen={version = "0.1.1",default-features = false}

@@ -1,3 +1,4 @@
+use crate::mask;
 use crate::paging::{paddr, vaddr};
 use std::mem::{size_of, MaybeUninit};
 use std::ptr;
@@ -49,13 +50,22 @@ impl<S: PageSize, const C: usize> FrameList<S, C> {
                 let ff = &mut *self.0;
                 if ff.count > 0 {
                     ff.count -= 1;
-                    return Some(ff.frames[ff.count].assume_init_read());
+                    return Some(Self::check_frame(ff.frames[ff.count].assume_init_read()));
                 }
                 ff.next
             };
             let frame = replace(&mut self.0, next);
-            Some(PhysFrame::from_start_address(paddr(VirtAddr::from_ptr(frame))).unwrap())
+            Some(Self::check_frame(
+                PhysFrame::from_start_address(paddr(VirtAddr::from_ptr(frame))).unwrap(),
+            ))
         }
+    }
+
+    fn check_frame(a: PhysFrame<S>) -> PhysFrame<S> {
+        debug_assert!(a.start_address().as_u64() & mask::<u64>(21) == 0);
+        // in principle, a could be at a higher address. But most likely it was corrupted.
+        debug_assert!(a.start_address().as_u64() < (1 << 46));
+        a
     }
 
     pub fn merge_into_vec(&mut self, dst: &mut Vec<PhysFrame<S>>) {
