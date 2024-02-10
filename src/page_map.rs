@@ -1,3 +1,4 @@
+use crate::mask;
 use ahash::RandomState;
 use next_gen::generator;
 use radium::marker::{Atomic, BitOps, NumericOps};
@@ -46,8 +47,8 @@ pub struct SmallCountHashMap<T: BetterAtom, const C: u32, const V: u32, const K:
     slot_index_mask: usize,
     slots: Vec<Atom<T>>,
     random_state: RandomState,
-    #[cfg(feature = "small_hash_map_debug")]
-    lock: Mutex<BTreeMap<T, (T, T)>>,
+    #[cfg(feature = "hash_map_debug")]
+    lock: std::sync::Mutex<std::collections::BTreeMap<T, (T, T)>>,
 }
 
 impl<T: BetterAtom, const C: u32, const V: u32, const K: u32> SmallCountHashMap<T, C, V, K> {
@@ -58,15 +59,15 @@ impl<T: BetterAtom, const C: u32, const V: u32, const K: u32> SmallCountHashMap<
             slot_index_mask: s - 1,
             slots: (0..s).map(|_| Atom::new(T::from(0))).collect(),
             random_state: RandomState::with_seed(0xee61096f95490820),
-            #[cfg(feature = "small_hash_map_debug")]
+            #[cfg(feature = "hash_map_debug")]
             lock: Default::default(),
         }
     }
 
     pub fn decrement(&self, k: T) -> Option<T> {
-        #[cfg(feature = "small_hash_map_debug")]
+        #[cfg(feature = "hash_map_debug")]
         let mut lock = self.lock.lock().unwrap();
-        #[cfg(feature = "small_hash_map_debug")]
+        #[cfg(feature = "hash_map_debug")]
         let debug = &mut lock.get_mut(&k).unwrap();
         let mut i = self.target_slot(k);
         loop {
@@ -74,17 +75,17 @@ impl<T: BetterAtom, const C: u32, const V: u32, const K: u32> SmallCountHashMap<
             if (found >> (K + V)) != T::from(0) && (found & crate::mask(K)) == k {
                 let old_val = self.slots[i].fetch_sub(T::from(1) << (K + V), Relaxed);
                 let old_count = old_val >> (K + V);
-                #[cfg(feature = "small_hash_map_debug")]
+                #[cfg(feature = "hash_map_debug")]
                 assert_eq!(old_count, debug.1);
                 let ret = if old_count == T::from(1) {
                     let v = (old_val >> K) & crate::mask(V);
-                    #[cfg(feature = "small_hash_map_debug")]
+                    #[cfg(feature = "hash_map_debug")]
                     assert_eq!(v, debug.0);
                     Some(v)
                 } else {
                     None
                 };
-                #[cfg(feature = "small_hash_map_debug")]
+                #[cfg(feature = "hash_map_debug")]
                 {
                     debug.1 = debug.1 - T::from(1);
                     if debug.1 == T::from(0) {
@@ -99,9 +100,9 @@ impl<T: BetterAtom, const C: u32, const V: u32, const K: u32> SmallCountHashMap<
     }
 
     pub fn insert(&self, k: T, v: T, c: T) -> usize {
-        #[cfg(feature = "small_hash_map_debug")]
+        #[cfg(feature = "hash_map_debug")]
         let mut lock = self.lock.lock().unwrap();
-        #[cfg(feature = "small_hash_map_debug")]
+        #[cfg(feature = "hash_map_debug")]
         {
             assert!(lock.insert(k, (v, c)).is_none());
         }
@@ -128,19 +129,19 @@ impl<T: BetterAtom, const C: u32, const V: u32, const K: u32> SmallCountHashMap<
     }
 
     pub fn increment_at(&self, index: usize, _k: T, amount: T) {
-        #[cfg(feature = "small_hash_map_debug")]
+        #[cfg(feature = "hash_map_debug")]
         let mut lock = self.lock.lock().unwrap();
-        #[cfg(feature = "small_hash_map_debug")]
+        #[cfg(feature = "hash_map_debug")]
         let old_debug_count = {
-            let x = &mut lock.get_mut(&k).unwrap().1;
+            let x = &mut lock.get_mut(&_k).unwrap().1;
             *x = *x + amount;
             *x - amount
         };
         let _old = self.slots[index].fetch_add(amount << (K + V), Relaxed);
-        #[cfg(feature = "small_hash_map_debug")]
+        #[cfg(feature = "hash_map_debug")]
         {
-            assert_eq!(old_debug_count, old >> (K + V));
-            assert_eq!(k, old & crate::mask(K));
+            assert_eq!(old_debug_count, _old >> (K + V));
+            assert_eq!(_k, _old & crate::mask(K));
         }
     }
 
@@ -153,6 +154,8 @@ pub struct RhHash<T: BetterAtom, const K: u32> {
     index_mask: usize,
     slots: Vec<Atom<T>>,
     random_state: RandomState,
+    #[cfg(feature = "hash_map_debug")]
+    lock: std::sync::Mutex<ahash::AHashMap<T, T>>,
 }
 
 impl<T: BetterAtom, const K: u32> RhHash<T, K> {
@@ -164,9 +167,16 @@ impl<T: BetterAtom, const K: u32> RhHash<T, K> {
                 .map(|_| Atom::<T>::new(T::from(0)))
                 .collect(),
             random_state: RandomState::with_seed(0xee61096f95490820),
+            #[cfg(feature = "hash_map_debug")]
+            lock: std::sync::Mutex::new(ahash::AHashMap::with_hasher(RandomState::with_seed(
+                0xee61096f95490820,
+            ))),
         }
     }
     pub fn update<A, F: FnMut(T) -> (A, T)>(&self, k: T, mut f: F) -> A {
+        #[cfg(feature = "hash_map_debug")]
+        let mut l = self.lock.lock().unwrap();
+
         debug_assert!(k | crate::mask(K) == crate::mask(K));
         let mut fa = |x: T| {
             let r = f(x);
@@ -185,8 +195,12 @@ impl<T: BetterAtom, const K: u32> RhHash<T, K> {
                 continue;
             }
             if peeked & crate::mask(K) == k {
+                #[cfg(feature = "hash_map_debug")]
+                assert_eq!(l.get(&k), Some(&peeked));
                 let (ret, new) = fa(peeked);
                 if new & Self::v_mask() == T::from(0) {
+                    #[cfg(feature = "hash_map_debug")]
+                    l.remove(&k);
                     match self.slots[scan_slot].compare_exchange_weak(
                         peeked,
                         Self::l_mask(),
@@ -201,6 +215,8 @@ impl<T: BetterAtom, const K: u32> RhHash<T, K> {
                         Err(_) => continue,
                     }
                 } else {
+                    #[cfg(feature = "hash_map_debug")]
+                    l.insert(k, new);
                     match self.slots[scan_slot].compare_exchange_weak(peeked, new, Relaxed, Relaxed)
                     {
                         Ok(_) => {
@@ -211,11 +227,14 @@ impl<T: BetterAtom, const K: u32> RhHash<T, K> {
                     }
                 }
             } else if peeked == T::from(0) {
+                #[cfg(feature = "hash_map_debug")]
+                assert!(l.get(&k).is_none());
                 let (ret, new) = fa(k);
                 if new & Self::v_mask() == T::from(0) {
                     self.unlock_range(target_slot, scan_slot);
                     return ret;
                 } else {
+                    l.insert(k, new);
                     match self.slots[scan_slot].compare_exchange_weak(peeked, new, Relaxed, Relaxed)
                     {
                         Ok(_) => {
@@ -233,8 +252,12 @@ impl<T: BetterAtom, const K: u32> RhHash<T, K> {
                 }
                 let other_psl = self.psl(self.target_slot(peek_locked & crate::mask(K)), scan_slot);
                 if self_psl > other_psl {
+                    #[cfg(feature = "hash_map_debug")]
+                    assert!(l.get(&k).is_none());
                     let (ret, new) = fa(k);
                     if new & Self::v_mask() != T::from(0) {
+                        #[cfg(feature = "hash_map_debug")]
+                        l.insert(k, new);
                         self.slots[scan_slot].store(new | Self::l_mask(), Relaxed);
                         self.propagate_insert(
                             self.next(scan_slot),
@@ -274,6 +297,11 @@ impl<T: BetterAtom, const K: u32> RhHash<T, K> {
                         .is_ok()
                     {
                         self.remove(i);
+                        #[cfg(feature = "hash_map_debug")]
+                        assert_eq!(
+                            self.lock.lock().unwrap().remove(&(peek & mask::<T>(K))),
+                            Some(peek)
+                        );
                         return peek;
                     } else {
                         break;
