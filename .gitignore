@@ -4,3 +4,5 @@
 /hello_release
 /hello_debug
 !src
+/libvirtual_alloc_debug.a
+/libvirtual_alloc_release.a

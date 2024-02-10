@@ -1,2 +1,3 @@
 /debug: ${MODULE_DIR}/hello_debug
 /release: ${MODULE_DIR}/hello_release
+/virtual_alloc_c: ${MODULE_DIR}/virtual_alloc_c

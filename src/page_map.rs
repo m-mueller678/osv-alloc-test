@@ -141,6 +141,7 @@ impl<T: BetterAtom, const C: u32, const V: u32, const K: u32> SmallCountHashMap<
         let _old = self.slots[index].fetch_add(amount << (K + V), Relaxed);
         #[cfg(feature = "hash_map_debug")]
         {
+            assert!((old_debug_count >> K) & mask(V) < (T::from(1) << V));
             assert_eq!(old_debug_count, _old >> (K + V));
             assert_eq!(_k, _old & mask(K));
         }

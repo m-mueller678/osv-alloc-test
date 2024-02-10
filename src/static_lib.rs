@@ -23,7 +23,7 @@ pub unsafe extern "C" fn virtual_alloc_init_global(physical_size: u64, virtual_s
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn virtual_alloc_create_handle(dst: *mut PtrLocalData, seed: u64) -> bool {
+pub unsafe extern "C" fn virtual_alloc_init_handle(dst: *mut PtrLocalData, seed: u64) -> bool {
     catch(|| match LocalData::new(seed, GLOBAL.assume_init_ref()) {
         Ok(x) => {
             dst.write(x);
@@ -65,9 +65,6 @@ pub unsafe extern "C" fn virtual_alloc_free(
 fn catch<B, F: FnOnce() -> B + UnwindSafe>(f: F) -> B {
     match catch_unwind(f) {
         Ok(a) => a,
-        Err(e) => {
-            eprintln!("rust panicked: {e:?}");
-            std::process::abort()
-        }
+        Err(_) => std::process::abort(),
     }
 }
