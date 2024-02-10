@@ -20,7 +20,7 @@ impl BuddyMap {
         }
     }
     pub fn insert(&self, buddy: u32) -> bool {
-        self.pairs.update(buddy / 32, |x| {
+        self.pairs.update(buddy / 2, |x| {
             if BUDDY_MASK & x == 0 {
                 (false, x | 1 << (PAIR_KEY_BITS + buddy % 2))
             } else {
@@ -34,7 +34,10 @@ impl BuddyMap {
         if x == 0 {
             return None;
         }
-        Some(x & mask::<u32>(PAIR_KEY_BITS))
+        let is_high = (x >> (1 + PAIR_KEY_BITS)) & 1;
+        let key = x & mask::<u32>(PAIR_KEY_BITS);
+        let buddy_id = key << 1 | is_high;
+        Some(buddy_id)
     }
 }
 
@@ -90,6 +93,7 @@ impl<const H: usize> BuddyTower<H> {
         for x in range {
             ret.insert(0, x);
         }
+        ret.print_counts();
         ret
     }
 
@@ -107,6 +111,8 @@ impl<const H: usize> BuddyTower<H> {
             mk_gen!(let gen=gen_fn(&other.maps[l].pairs));
             for x in gen {
                 if transfer_buffer.len() == transfer_buffer.capacity() {
+                    // this should never happen with properly sized transfer vector
+                    eprintln!("ran out of transfer buffer space");
                     self.insert_transfer_vector(transfer_buffer);
                 }
                 let is_high = (x >> (1 + PAIR_KEY_BITS)) & 1;

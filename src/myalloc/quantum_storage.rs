@@ -44,10 +44,11 @@ impl QuantumStorage {
     }
 
     pub fn from_range(range: Range<u32>) -> Self {
+        dbg!(&range);
         QuantumStorage {
             available_quanta: BuddyTower::from_range(range.clone()),
             released_quanta: BuddyTower::new(range.len()),
-            transfer_buffer: Mutex::new(Vec::with_capacity(1 << 12)),
+            transfer_buffer: Mutex::new(Vec::with_capacity(range.len() / 2)),
         }
     }
 }
