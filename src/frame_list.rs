@@ -1,5 +1,5 @@
-use crate::mask;
 use crate::paging::{paddr, vaddr};
+use crate::util::mask;
 use std::mem::{size_of, MaybeUninit};
 use std::ptr;
 use std::ptr::{addr_of_mut, replace};

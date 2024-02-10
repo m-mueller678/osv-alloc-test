@@ -1,5 +1,5 @@
-use crate::mask;
 use crate::page_map::RhHash;
+use crate::util::mask;
 use next_gen::mk_gen;
 use rand::Rng;
 use std::ops::Range;

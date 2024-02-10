@@ -1,4 +1,4 @@
-use crate::mask;
+use crate::util::mask;
 use ahash::RandomState;
 use next_gen::generator;
 use radium::marker::{Atomic, BitOps, NumericOps};

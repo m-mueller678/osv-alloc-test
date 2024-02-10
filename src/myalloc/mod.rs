@@ -1,8 +1,10 @@
+use crate::frame_allocator::MmapFrameAllocator;
 use crate::frame_list::FrameList2M;
 use crate::myalloc::quantum_storage::QuantumStorage;
 use crate::page_map::{PageMap, SmallCountHashMap};
 use crate::paging::{allocate_l2_tables, map_huge_page, unmap_huge_page};
-use crate::{alloc_mmap, page_table, MmapFrameAllocator, TestAlloc, MB, PHYS_OFFSET};
+use crate::util::{alloc_mmap, page_table, MB, PHYS_OFFSET};
+use crate::TestAlloc;
 use ahash::RandomState;
 use rand::rngs::SmallRng;
 use rand::SeedableRng;

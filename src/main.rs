@@ -2,7 +2,6 @@
 #![allow(clippy::missing_safety_doc)]
 
 use crate::myalloc::LocalData;
-use crate::page_map::BetterAtom;
 use libc::*;
 use rand::distributions::Uniform;
 use rand::prelude::*;
@@ -11,100 +10,21 @@ use std::alloc::{GlobalAlloc, Layout};
 use std::collections::VecDeque;
 use std::mem::{align_of, size_of, MaybeUninit};
 use std::ops::Range;
-use std::ptr;
 use std::sync::Barrier;
 use std::thread::scope;
 use std::time::Instant;
 use tikv_jemallocator::Jemalloc;
-use x86_64::registers::control::Cr3;
-use x86_64::structures::paging::page::PageRange;
-use x86_64::structures::paging::{
-    FrameAllocator, Mapper, OffsetPageTable, Page, PageSize, PageTable, PhysFrame, Size2MiB,
-    Size4KiB,
-};
-use x86_64::{PhysAddr, VirtAddr};
+use util::{GB, MB, TB};
 
 pub mod buddymap;
+pub mod frame_allocator;
 pub mod frame_list;
 pub mod log_alloc;
 pub mod myalloc;
 pub mod no_frame_allocator;
 pub mod page_map;
 pub mod paging;
-
-// from osv/libs/mman.cc
-const MAP_UNINITIALIZED: i32 = 0x4000000;
-
-fn alloc_mmap<P: PageSize>(count: usize, zeroed: bool) -> PageRange<P> {
-    let page_size_flags = match P::SIZE {
-        Size4KiB::SIZE => 0,
-        Size2MiB::SIZE => MAP_HUGETLB | MAP_HUGE_2MB,
-        _ => panic!("bad page size {}", P::SIZE_AS_DEBUG_STR),
-    };
-    let init_flags = if zeroed { 0 } else { MAP_UNINITIALIZED };
-    let p = unsafe {
-        mmap(
-            ptr::null_mut(),
-            count * P::SIZE as usize,
-            PROT_READ | PROT_WRITE,
-            MAP_PRIVATE | MAP_ANONYMOUS | page_size_flags | init_flags,
-            -1,
-            0,
-        ) as *mut u8
-    };
-    assert!(!p.is_null());
-    let p = Page::<P>::from_start_address(VirtAddr::from_ptr(p)).unwrap();
-    Page::range(p, p + count as u64)
-}
-
-const KB: usize = 1 << 10;
-const MB: usize = KB << 10;
-const GB: usize = MB << 10;
-const TB: usize = GB << 10;
-
-const PHYS_OFFSET: u64 = 0x0000400000000000;
-
-fn phys_to_virt(p: PhysAddr) -> VirtAddr {
-    VirtAddr::new(PHYS_OFFSET + p.as_u64())
-}
-
-#[derive(Default)]
-pub struct MmapFrameAllocator {
-    frames: Vec<PhysFrame>,
-}
-
-impl MmapFrameAllocator {
-    fn refill(&mut self) {
-        if self.frames.len() < 8 {
-            self.frames.extend(claim_frames(8))
-        }
-    }
-}
-
-unsafe fn page_table<'a>() -> OffsetPageTable<'a> {
-    OffsetPageTable::new(
-        &mut *phys_to_virt(Cr3::read().0.start_address()).as_mut_ptr::<PageTable>(),
-        VirtAddr::new(PHYS_OFFSET),
-    )
-}
-
-unsafe impl FrameAllocator<Size4KiB> for MmapFrameAllocator {
-    fn allocate_frame(&mut self) -> Option<PhysFrame<Size4KiB>> {
-        self.frames.pop()
-    }
-}
-
-fn claim_frames<P: PageSize>(count: usize) -> impl Iterator<Item = PhysFrame<P>>
-where
-    for<'a> OffsetPageTable<'a>: Mapper<P>,
-{
-    alloc_mmap::<P>(count, false).into_iter().map(|page| {
-        unsafe {
-            page.start_address().as_mut_ptr::<u8>().write(0);
-        }
-        unsafe { page_table() }.translate_page(page).unwrap()
-    })
-}
+pub mod util;
 
 unsafe trait TestAlloc: Send {
     unsafe fn alloc(&mut self, layout: Layout) -> *mut u8;
@@ -165,7 +85,7 @@ fn main() {
     let virt_size = TB;
     let max_use = phys_size - phys_size / 4;
     let avg_alloc_size = 16 * MB;
-    let alloc_per_thread = 1_000_000;
+    let alloc_per_thread = 500;
 
     for alloc in allocs {
         println!("{alloc}:");
@@ -281,7 +201,7 @@ fn test_alloc<A: TestAlloc>(
                                 ptr.add(i).write(next_id + i);
                             }
                             next_id += 1 << 16;
-                            allocs.push_back((ptr, size))
+                            allocs.push_back((ptr, size));
                         }
                     }
 
@@ -310,8 +230,4 @@ fn test_alloc<A: TestAlloc>(
         "complete. {:.3e} alloc/s/thread",
         allocs_per_thread as f64 / duration.as_secs_f64()
     );
-}
-
-fn mask<T: BetterAtom>(bits: u32) -> T {
-    (T::from(1) << bits) - T::from(1)
 }

@@ -1,4 +1,5 @@
-use crate::{MmapFrameAllocator, PHYS_OFFSET};
+use crate::frame_allocator::MmapFrameAllocator;
+use crate::util::PHYS_OFFSET;
 use std::mem::MaybeUninit;
 use x86_64::registers::control::Cr3;
 use x86_64::structures::paging::page::PageRangeInclusive;
