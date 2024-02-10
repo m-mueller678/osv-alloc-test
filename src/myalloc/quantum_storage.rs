@@ -29,7 +29,6 @@ impl QuantumStorage {
         } else {
             // recycling in progress, just wait for it to be done.
             drop(self.transfer_buffer.lock());
-            dbg!();
         }
     }
 

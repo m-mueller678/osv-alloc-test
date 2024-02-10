@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-default=["hash_map_debug"]
+default=[]
 hash_map_debug =[]
 log_rust_global_alloc=[]
 
