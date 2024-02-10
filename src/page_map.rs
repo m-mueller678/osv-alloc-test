@@ -4,7 +4,6 @@ use next_gen::generator;
 use radium::marker::{Atomic, BitOps, NumericOps};
 use radium::{Atom, Radium};
 use rand::prelude::*;
-use rand::Rng;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::mem::size_of;
@@ -40,7 +39,7 @@ impl<
 }
 
 fn check_width(val: impl BetterAtom, bits: u32) {
-    debug_assert!(val | crate::mask(bits) == crate::mask(bits));
+    debug_assert!(val | mask(bits) == mask(bits));
 }
 
 pub struct SmallCountHashMap<T: BetterAtom, const C: u32, const V: u32, const K: u32> {
@@ -72,13 +71,13 @@ impl<T: BetterAtom, const C: u32, const V: u32, const K: u32> SmallCountHashMap<
         let mut i = self.target_slot(k);
         loop {
             let found = self.slots[i].load(Relaxed);
-            if (found >> (K + V)) != T::from(0) && (found & crate::mask(K)) == k {
+            if (found >> (K + V)) != T::from(0) && (found & mask(K)) == k {
                 let old_val = self.slots[i].fetch_sub(T::from(1) << (K + V), Relaxed);
                 let old_count = old_val >> (K + V);
                 #[cfg(feature = "hash_map_debug")]
                 assert_eq!(old_count, debug.1);
                 let ret = if old_count == T::from(1) {
-                    let v = (old_val >> K) & crate::mask(V);
+                    let v = (old_val >> K) & mask(V);
                     #[cfg(feature = "hash_map_debug")]
                     assert_eq!(v, debug.0);
                     Some(v)
@@ -141,7 +140,7 @@ impl<T: BetterAtom, const C: u32, const V: u32, const K: u32> SmallCountHashMap<
         #[cfg(feature = "hash_map_debug")]
         {
             assert_eq!(old_debug_count, _old >> (K + V));
-            assert_eq!(_k, _old & crate::mask(K));
+            assert_eq!(_k, _old & mask(K));
         }
     }
 
@@ -177,10 +176,10 @@ impl<T: BetterAtom, const K: u32> RhHash<T, K> {
         #[cfg(feature = "hash_map_debug")]
         let mut l = self.lock.lock().unwrap();
 
-        debug_assert!(k | crate::mask(K) == crate::mask(K));
+        debug_assert!(k | mask(K) == mask(K));
         let mut fa = |x: T| {
             let r = f(x);
-            debug_assert!(r.1 & crate::mask(K) == k);
+            debug_assert!(r.1 & mask(K) == k);
             debug_assert!(r.1 & Self::l_mask() == T::from(0));
             r
         };
@@ -194,7 +193,7 @@ impl<T: BetterAtom, const K: u32> RhHash<T, K> {
                 Self::do_yield();
                 continue;
             }
-            if peeked & crate::mask(K) == k {
+            if peeked & mask(K) == k {
                 #[cfg(feature = "hash_map_debug")]
                 assert_eq!(l.get(&k), Some(&peeked));
                 let (ret, new) = fa(peeked);
@@ -250,7 +249,7 @@ impl<T: BetterAtom, const K: u32> RhHash<T, K> {
                     Self::do_yield();
                     continue;
                 }
-                let other_psl = self.psl(self.target_slot(peek_locked & crate::mask(K)), scan_slot);
+                let other_psl = self.psl(self.target_slot(peek_locked & mask(K)), scan_slot);
                 if self_psl > other_psl {
                     #[cfg(feature = "hash_map_debug")]
                     assert!(l.get(&k).is_none());
@@ -280,6 +279,8 @@ impl<T: BetterAtom, const K: u32> RhHash<T, K> {
     }
 
     pub fn remove_any(&self, rng: &mut impl Rng, mut max_scan: usize) -> T {
+        #[cfg(feature = "hash_map_debug")]
+        let mut l = self.lock.lock().unwrap();
         loop {
             let mut i = rng.gen::<usize>() & self.index_mask;
             loop {
@@ -298,10 +299,7 @@ impl<T: BetterAtom, const K: u32> RhHash<T, K> {
                     {
                         self.remove(i);
                         #[cfg(feature = "hash_map_debug")]
-                        assert_eq!(
-                            self.lock.lock().unwrap().remove(&(peek & mask::<T>(K))),
-                            Some(peek)
-                        );
+                        assert_eq!(l.remove(&(peek & mask::<T>(K))), Some(peek));
                         return peek;
                     } else {
                         break;
@@ -328,7 +326,7 @@ impl<T: BetterAtom, const K: u32> RhHash<T, K> {
                 self.unlock_range(unlock_from, i);
                 return;
             }
-            let other_psl = self.psl(self.target_slot(peek_locked & crate::mask(K)), i);
+            let other_psl = self.psl(self.target_slot(peek_locked & mask(K)), i);
             if psl > other_psl {
                 self.slots[i].store(Self::l_mask() | displaced, Relaxed);
                 displaced = peek_locked;
@@ -344,7 +342,7 @@ impl<T: BetterAtom, const K: u32> RhHash<T, K> {
     }
 
     fn v_mask() -> T {
-        crate::mask::<T>(Self::bits() - K - 1) << K
+        mask::<T>(Self::bits() - K - 1) << K
     }
 
     fn l_mask() -> T {
@@ -377,7 +375,7 @@ impl<T: BetterAtom, const K: u32> RhHash<T, K> {
                 Self::do_yield();
                 continue;
             }
-            if next_locked == T::from(0) || self.target_slot(next_locked & crate::mask(K)) == ni {
+            if next_locked == T::from(0) || self.target_slot(next_locked & mask(K)) == ni {
                 self.slots[i].store(T::from(0), Relaxed);
                 self.slots[ni].fetch_and(!Self::l_mask(), Relaxed);
                 return;
@@ -393,7 +391,7 @@ impl<T: BetterAtom, const K: u32> RhHash<T, K> {
     }
 
     fn target_slot(&self, k: T) -> usize {
-        debug_assert!(k | crate::mask(K) == crate::mask(K));
+        debug_assert!(k | mask(K) == mask(K));
         self.random_state.hash_one(k) as usize & self.index_mask
     }
 
@@ -416,6 +414,8 @@ impl<T: BetterAtom, const K: u32> RhHash<T, K> {
 
     #[generator(yield(T))]
     pub fn drain(this: &Self) -> Option<T> {
+        #[cfg(feature = "hash_map_debug")]
+        let mut l = this.lock.lock().unwrap();
         let mut locked_from = 0;
         let mut i = 0;
         let mut may_stop = false;
@@ -437,6 +437,8 @@ impl<T: BetterAtom, const K: u32> RhHash<T, K> {
                     return None;
                 }
             } else {
+                #[cfg(feature = "hash_map_debug")]
+                assert!(l.remove(&(peek_lock & mask::<T>(K))) == Some(peek_lock));
                 yield_!(peek_lock);
                 i = ni;
             }

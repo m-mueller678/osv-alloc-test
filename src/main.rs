@@ -160,7 +160,7 @@ fn main() {
 
     // 1.664e5, 1.519e5, 1.524e5
     let test_mode = AllocTestMode::First;
-    let threads = 16;
+    let threads = 1;
     let phys_size = 8 * GB;
     let virt_size = TB;
     let max_use = phys_size - phys_size / 4;
