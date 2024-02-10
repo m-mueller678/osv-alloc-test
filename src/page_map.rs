@@ -1,14 +1,14 @@
 use ahash::RandomState;
+use next_gen::generator;
 use radium::marker::{Atomic, BitOps, NumericOps};
 use radium::{Atom, Radium};
+use rand::prelude::*;
+use rand::Rng;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::mem::size_of;
 use std::ops::{Shl, Shr};
 use std::sync::atomic::Ordering::Relaxed;
-use next_gen::generator;
-use rand::prelude::*;
-use rand::Rng;
 use std::thread::yield_now;
 use x86_64::structures::paging::{Page, PhysFrame, Size2MiB};
 use x86_64::PhysAddr;
