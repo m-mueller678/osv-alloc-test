@@ -16,7 +16,8 @@ const BUDDY_MASK: u32 = 3u32 << PAIR_KEY_BITS;
 impl BuddyMap {
     pub fn new(slot_count: usize) -> Self {
         BuddyMap {
-            pairs: RhHash::new(slot_count.max(2)),
+            // TODO rhHashmap is prone to deadlocks if there are too few slots per thread.
+            pairs: RhHash::new(slot_count.max(1 << 10)),
         }
     }
     pub fn insert(&self, buddy: u32) -> bool {

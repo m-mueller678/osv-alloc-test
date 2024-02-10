@@ -177,17 +177,9 @@ impl<T: BetterAtom, const K: u32> RhHash<T, K> {
     pub fn update<A, F: FnMut(T) -> (A, T)>(&self, k: T, mut f: F) -> A {
         #[cfg(feature = "hash_map_debug")]
         let mut l = self.lock.lock().unwrap();
-
-        if Some(k) == T::try_from(69221597).ok().map(|x| x & mask::<T>(K)) {
-            eprintln!("update");
-        }
-
         debug_assert!(k | mask(K) == mask(K));
         let mut fa = |x: T| {
             let r = f(x);
-            if Some(k) == T::try_from(69221597).ok().map(|x| x & mask::<T>(K)) {
-                eprintln!("{:08x?} -> {:08x?}", x, r.1);
-            }
             debug_assert!(r.1 & mask(K) == k);
             debug_assert!(r.1 & Self::l_mask() == T::from(0));
             r
@@ -308,12 +300,6 @@ impl<T: BetterAtom, const K: u32> RhHash<T, K> {
                         .is_ok()
                     {
                         self.remove(i);
-                        if Some(peek & mask(K))
-                            == T::try_from(69221597).ok().map(|x| x & mask::<T>(K))
-                        {
-                            dbg!(i, &self.slots[i].load(Relaxed));
-                            eprintln!("remove any");
-                        }
                         #[cfg(feature = "hash_map_debug")]
                         assert_eq!(l.remove(&(peek & mask::<T>(K))), Some(peek));
                         return peek;
@@ -460,10 +446,6 @@ impl<T: BetterAtom, const K: u32> RhHash<T, K> {
             } else {
                 #[cfg(feature = "hash_map_debug")]
                 assert!(l.remove(&(peek_lock & mask::<T>(K))) == Some(peek_lock));
-                if Some(peek_lock & mask(K)) == T::try_from(69221597).ok().map(|x| x & mask::<T>(K))
-                {
-                    eprintln!("drain");
-                }
                 yield_!(peek_lock);
                 i = ni;
             }
@@ -488,10 +470,6 @@ fn test_rh() {
                 let v = if j == LIFETIME { 0 } else { i + 1 };
                 ((), v << BITS | k)
             });
-            // for x in &rh.slots{
-            //     eprint!("0x{:016x?}, ",x.load(Relaxed));
-            // }
-            // eprintln!();
         }
     }
 }
