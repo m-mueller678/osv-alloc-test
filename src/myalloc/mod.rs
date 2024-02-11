@@ -167,6 +167,13 @@ unsafe impl<G: Deref<Target = GlobalData> + Send> TestAlloc for LocalData<G> {
                 eprintln!("out of memory");
                 return ptr::null_mut();
             }
+            let current_quantum = address_to_quantum(self.current_page.start_address());
+            debug_assert!(current_quantum == address_to_quantum(min_page.start_address()));
+            self.global.pages_per_quantum.increment_at(
+                self.current_quantum_index,
+                current_quantum,
+                (self.current_page - min_page) as u32,
+            );
             if max_page != self.current_page {
                 self.decrement_page(self.current_page)
             }
@@ -175,12 +182,6 @@ unsafe impl<G: Deref<Target = GlobalData> + Send> TestAlloc for LocalData<G> {
                     .global
                     .map_and_insert(p, self.available_frames.pop().unwrap(), 1);
             }
-            let current_quantum = address_to_quantum(self.current_page.start_address());
-            self.global.pages_per_quantum.increment_at(
-                self.current_quantum_index,
-                current_quantum,
-                (self.current_page - min_page) as u32,
-            );
             self.current_page = min_page;
             self.current_page_index =
                 self.global

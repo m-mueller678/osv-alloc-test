@@ -6,3 +6,4 @@
 !src
 /libvirtual_alloc_debug.a
 /libvirtual_alloc_release.a
+/virtual_alloc_c
