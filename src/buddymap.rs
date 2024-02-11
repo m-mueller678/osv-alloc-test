@@ -89,7 +89,6 @@ impl<const H: usize> BuddyTower<H> {
 
     pub fn from_range(range: Range<u32>) -> Self {
         assert!((range.end - 1) < (1u32 << QUANTUM_ID_BITS));
-        dbg!(&range);
         let ret = Self::new(range.len());
         for x in range {
             ret.insert(0, x);

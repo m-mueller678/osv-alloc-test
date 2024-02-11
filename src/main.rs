@@ -14,7 +14,7 @@ use std::thread::scope;
 use std::time::Instant;
 use tikv_jemallocator::Jemalloc;
 use virtual_alloc::myalloc::{GlobalData, LocalData};
-use virtual_alloc::util::{GB, MB, TB};
+use virtual_alloc::util::{GB, TB};
 use virtual_alloc::TestAlloc;
 
 pub mod log_alloc;
@@ -62,8 +62,8 @@ fn main() {
     let phys_size = 8 * GB;
     let virt_size = TB;
     let max_use = phys_size - phys_size / 4;
-    let avg_alloc_size = 16 * MB;
-    let alloc_per_thread = 500;
+    let avg_alloc_size = 128;
+    let alloc_per_thread = 1_000_000;
 
     for alloc in allocs {
         println!("{alloc}:");
@@ -144,15 +144,9 @@ fn test_alloc<A: TestAlloc>(
 
                 unsafe {
                     while allocs.len() < concurrent_allocs_per_thread {
-                        if allocs.len() >= 102500 {
-                            dbg!(allocs.len() * avg_alloc_size * 8);
-                        }
                         let size = size_range.sample(&mut rng);
                         let ptr = a.alloc(layout(size)) as *mut usize;
                         assert!(!ptr.is_null());
-                        if allocs.len() >= 102500 {
-                            dbg!(ptr);
-                        }
                         for i in mode.index_range(size) {
                             ptr.add(i).write(next_id + i);
                         }

@@ -42,7 +42,7 @@ impl QuantumStorage {
     }
 
     pub fn from_range(range: Range<u32>) -> Self {
-        dbg!(&range);
+        eprintln!("quantum range: {:?}", &range);
         QuantumStorage {
             available_quanta: BuddyTower::from_range(range.clone()),
             released_quanta: BuddyTower::new(range.len()),
