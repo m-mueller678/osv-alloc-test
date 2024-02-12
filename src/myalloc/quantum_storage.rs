@@ -45,7 +45,7 @@ impl QuantumStorage {
         eprintln!("quantum range: {:?}", &range);
         QuantumStorage {
             available_quanta: BuddyTower::from_range(range.clone()),
-            released_quanta: BuddyTower::new(range.len()),
+            released_quanta: BuddyTower::new(range.len(), range.start),
             transfer_buffer: Mutex::new(Vec::with_capacity(range.len() / 2)),
         }
     }

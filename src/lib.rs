@@ -1,3 +1,6 @@
+#![allow(clippy::result_unit_err)]
+#![allow(clippy::missing_safety_doc)]
+
 use std::alloc::Layout;
 
 pub mod buddymap;

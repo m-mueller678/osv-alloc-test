@@ -1,62 +1,92 @@
-use crate::page_map::RhHash;
 use crate::util::mask;
-use next_gen::mk_gen;
+
+use rand::distributions::Distribution;
+use rand::distributions::Uniform;
 use rand::Rng;
 use std::ops::Range;
+use std::sync::atomic::Ordering::Relaxed;
+use std::sync::atomic::{AtomicU64, Ordering};
 use x86_64::structures::paging::mapper::MapperFlushAll;
 
 const QUANTUM_ID_BITS: u32 = 27;
 const TRANSFER_BUFFER_LEVEL_BITS: u32 = 32 - QUANTUM_ID_BITS;
-const PAIR_KEY_BITS: u32 = QUANTUM_ID_BITS - 1;
+
 pub struct BuddyMap {
-    pairs: RhHash<u32, PAIR_KEY_BITS>,
+    pairs: Vec<AtomicU64>,
+    index_distribution: Uniform<usize>,
 }
-const BUDDY_MASK: u32 = 3u32 << PAIR_KEY_BITS;
 
 impl BuddyMap {
     pub fn new(slot_count: usize) -> Self {
+        let len = (slot_count).div_ceil(64);
         BuddyMap {
-            // TODO rhHashmap is prone to deadlocks if there are too few slots per thread.
-            pairs: RhHash::new(slot_count.max(1 << 10)),
+            pairs: (0..len).map(|_| AtomicU64::new(0)).collect(),
+            index_distribution: Uniform::new(0, len),
         }
     }
-    pub fn insert(&self, buddy: u32) -> bool {
-        self.pairs.update(buddy / 2, |x| {
-            if BUDDY_MASK & x == 0 {
-                (false, x | 1 << (PAIR_KEY_BITS + buddy % 2))
-            } else {
-                (true, x & !BUDDY_MASK)
-            }
-        })
+    pub fn insert(&self, quantum: u32) -> bool {
+        let word = (quantum / 64) as usize;
+        let bit = quantum % 64;
+        let buddy_bit = bit ^ 1;
+        let mut ret = false;
+        self.pairs[word]
+            .fetch_update(Relaxed, Relaxed, |x| {
+                if (x >> buddy_bit) & 1 != 0 {
+                    ret = true;
+                    Some(x ^ (1 << buddy_bit))
+                } else {
+                    ret = false;
+                    Some(x | 1 << bit)
+                }
+            })
+            .ok();
+        ret
     }
 
     pub fn remove(&self, rng: &mut impl Rng) -> Option<u32> {
-        let x = self.pairs.remove_any(rng, 128);
-        if x == 0 {
-            return None;
+        let mut i: usize = self.index_distribution.sample(rng);
+        let mut bit = 0;
+        for _ in 0..16 {
+            let taken = self.pairs[i]
+                .fetch_update(Relaxed, Relaxed, |x| {
+                    if x == 0 {
+                        None
+                    } else {
+                        bit = x.trailing_zeros();
+                        Some(x ^ (1 << bit))
+                    }
+                })
+                .is_ok();
+            if taken {
+                return Some(i as u32 * 64 + bit);
+            } else {
+                i += 1;
+                if i == self.pairs.len() {
+                    i = 0;
+                }
+            }
         }
-        let is_high = (x >> (1 + PAIR_KEY_BITS)) & 1;
-        let key = x & mask::<u32>(PAIR_KEY_BITS);
-        let buddy_id = key << 1 | is_high;
-        Some(buddy_id)
+        None
     }
 }
 
 pub struct BuddyTower<const H: usize> {
+    base_quantum: u32,
     maps: [BuddyMap; H],
 }
 
 impl<const H: usize> BuddyTower<H> {
-    pub fn new(quantum_count: usize) -> Self {
+    pub fn new(quantum_count: usize, base_quantum: u32) -> Self {
         assert!(H < (1usize << TRANSFER_BUFFER_LEVEL_BITS));
         dbg!(quantum_count);
-        let l0_slots = (quantum_count / 2).next_power_of_two();
         BuddyTower {
-            maps: array_init::array_init(|i| BuddyMap::new(l0_slots >> i)),
+            base_quantum,
+            maps: array_init::array_init(|i| BuddyMap::new(quantum_count.div_ceil(1 << i))),
         }
     }
 
     pub fn insert(&self, mut level: u32, first_quantum: u32) {
+        let first_quantum = first_quantum - self.base_quantum;
         debug_assert!(first_quantum % (1 << level) == 0);
         while self.maps[level as usize].insert(first_quantum >> level) {
             //eprintln!("found buddy on level {level:2}");
@@ -78,7 +108,7 @@ impl<const H: usize> BuddyTower<H> {
                     let found_buddy = self.maps[taken_from as usize].insert(buddy_id + 1);
                     debug_assert!(!found_buddy);
                 }
-                return Some(buddy_id << taken_from);
+                return Some((buddy_id << taken_from) + self.base_quantum);
             } else {
                 taken_from += 1;
             }
@@ -89,7 +119,7 @@ impl<const H: usize> BuddyTower<H> {
 
     pub fn from_range(range: Range<u32>) -> Self {
         assert!((range.end - 1) < (1u32 << QUANTUM_ID_BITS));
-        let ret = Self::new(range.len());
+        let ret = Self::new(range.len(), range.start);
         for x in range {
             ret.insert(0, x);
         }
@@ -99,27 +129,34 @@ impl<const H: usize> BuddyTower<H> {
 
     pub fn print_counts(&self) {
         for (i, l) in self.maps.iter().enumerate() {
-            print!("{i:2}:{:4}, ", l.pairs.count())
+            print!(
+                "{i:2}:{:4}, ",
+                l.pairs
+                    .iter()
+                    .map(|x| x.load(Relaxed).count_ones())
+                    .sum::<u32>()
+            )
         }
         println!();
     }
 
-    pub fn steal_all_and_flush(&self, other: &Self, transfer_buffer: &mut Vec<u32>) {
+    pub fn steal_all_and_flush(&self, _other: &Self, transfer_buffer: &mut Vec<u32>) {
         debug_assert!(transfer_buffer.is_empty());
         for l in 0..H {
-            let gen_fn = RhHash::drain;
-            mk_gen!(let gen=gen_fn(&other.maps[l].pairs));
-            for x in gen {
-                if transfer_buffer.len() == transfer_buffer.capacity() {
-                    // this should never happen with properly sized transfer vector
-                    eprintln!("ran out of transfer buffer space");
-                    self.insert_transfer_vector(transfer_buffer);
+            for (i, x) in self.maps[l].pairs.iter().enumerate() {
+                let mut taken = x.swap(0, Ordering::Relaxed);
+                while taken != 0 {
+                    if transfer_buffer.len() == transfer_buffer.capacity() {
+                        // this should never happen with properly sized transfer vector
+                        eprintln!("ran out of transfer buffer space");
+                        self.insert_transfer_vector(transfer_buffer);
+                    }
+                    let bit = taken.trailing_zeros();
+                    taken ^= 1 << bit;
+                    let quantum_id = (i as u32 * 64 + bit) << l;
+                    let _transfer_encoded =
+                        (l as u32) << QUANTUM_ID_BITS | (quantum_id + self.base_quantum);
                 }
-                let is_high = (x >> (1 + PAIR_KEY_BITS)) & 1;
-                let key = x & mask::<u32>(PAIR_KEY_BITS);
-                let quantum_id = (key << 1 | is_high) << l;
-                let transfer_encoded = (l as u32) << QUANTUM_ID_BITS | quantum_id;
-                transfer_buffer.push(transfer_encoded);
             }
         }
         self.insert_transfer_vector(transfer_buffer);
