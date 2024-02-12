@@ -31,12 +31,13 @@ impl BuddyMap {
         let mut ret = false;
         self.pairs[word]
             .fetch_update(Relaxed, Relaxed, |x| {
+                debug_assert!(x & (1 << bit) == 0);
                 if (x >> buddy_bit) & 1 != 0 {
                     ret = true;
                     Some(x ^ (1 << buddy_bit))
                 } else {
                     ret = false;
-                    Some(x | 1 << bit)
+                    Some(x ^ 1 << bit)
                 }
             })
             .ok();
@@ -140,10 +141,10 @@ impl<const H: usize> BuddyTower<H> {
         println!();
     }
 
-    pub fn steal_all_and_flush(&self, _other: &Self, transfer_buffer: &mut Vec<u32>) {
+    pub fn steal_all_and_flush(&self, other: &Self, transfer_buffer: &mut Vec<u32>) {
         debug_assert!(transfer_buffer.is_empty());
         for l in 0..H {
-            for (i, x) in self.maps[l].pairs.iter().enumerate() {
+            for (i, x) in other.maps[l].pairs.iter().enumerate() {
                 let mut taken = x.swap(0, Ordering::Relaxed);
                 while taken != 0 {
                     if transfer_buffer.len() == transfer_buffer.capacity() {
@@ -154,8 +155,9 @@ impl<const H: usize> BuddyTower<H> {
                     let bit = taken.trailing_zeros();
                     taken ^= 1 << bit;
                     let quantum_id = (i as u32 * 64 + bit) << l;
-                    let _transfer_encoded =
+                    let transfer_encoded =
                         (l as u32) << QUANTUM_ID_BITS | (quantum_id + self.base_quantum);
+                    transfer_buffer.push(transfer_encoded);
                 }
             }
         }
@@ -167,6 +169,6 @@ impl<const H: usize> BuddyTower<H> {
         for x in &mut *transfer_buffer {
             self.insert(*x >> QUANTUM_ID_BITS, *x & mask::<u32>(QUANTUM_ID_BITS))
         }
-        transfer_buffer.clear()
+        transfer_buffer.clear();
     }
 }

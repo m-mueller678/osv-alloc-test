@@ -14,7 +14,7 @@ use std::thread::scope;
 use std::time::Instant;
 use tikv_jemallocator::Jemalloc;
 use virtual_alloc::myalloc::{GlobalData, LocalData};
-use virtual_alloc::util::{GB, TB};
+use virtual_alloc::util::{GB, MB, TB};
 use virtual_alloc::TestAlloc;
 
 pub mod log_alloc;
@@ -62,7 +62,7 @@ fn main() {
     let phys_size = 8 * GB;
     let virt_size = TB;
     let max_use = phys_size - phys_size / 4;
-    let avg_alloc_size = 128;
+    let avg_alloc_size = 16 * MB;
     let alloc_per_thread = 1_000_000;
 
     for alloc in allocs {
