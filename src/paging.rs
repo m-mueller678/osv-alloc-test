@@ -13,6 +13,9 @@ pub unsafe fn allocate_l2_tables(
     range: PageRangeInclusive<Size2MiB>,
     frame_allocator: &mut MmapFrameAllocator,
 ) {
+    if cfg!(feature = "no_mem") {
+        return;
+    };
     let (l4_frame, _) = Cr3::read();
     let l4 = VirtAddr::new(l4_frame.start_address().as_u64() + PHYS_OFFSET)
         .as_mut_ptr::<PageTableEntry>();
@@ -41,7 +44,22 @@ pub unsafe fn allocate_l2_tables(
     }
 }
 
+#[cfg(feature = "no_mem")]
+static NO_MEM_PAGE_TABLE: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::BTreeMap<Page<Size2MiB>, PhysFrame<Size2MiB>>>,
+> = std::sync::OnceLock::new();
+
 pub unsafe fn map_huge_page(page: Page<Size2MiB>, frame: PhysFrame<Size2MiB>) {
+    #![cfg_attr(feature = "no_mem", allow(unreachable_code))]
+    #[cfg(feature = "no_mem")]
+    {
+        NO_MEM_PAGE_TABLE
+            .get_or_init(Default::default)
+            .lock()
+            .unwrap()
+            .insert(page, frame);
+        return;
+    }
     let (l4_frame, _) = Cr3::read();
     let l4 = VirtAddr::new(l4_frame.start_address().as_u64() + PHYS_OFFSET)
         .as_mut_ptr::<PageTableEntry>();
@@ -60,6 +78,14 @@ pub unsafe fn map_huge_page(page: Page<Size2MiB>, frame: PhysFrame<Size2MiB>) {
 }
 
 pub unsafe fn unmap_huge_page(page: Page<Size2MiB>) -> PhysFrame<Size2MiB> {
+    #![cfg_attr(feature = "no_mem", allow(unreachable_code))]
+    #[cfg(feature = "no_mem")]
+    return NO_MEM_PAGE_TABLE
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap()
+        .remove(&page)
+        .unwrap();
     let (l4_frame, _) = Cr3::read();
     let l4 = VirtAddr::new(l4_frame.start_address().as_u64() + PHYS_OFFSET)
         .as_mut_ptr::<PageTableEntry>();
@@ -89,6 +115,7 @@ pub unsafe fn unmap_huge_page(page: Page<Size2MiB>) -> PhysFrame<Size2MiB> {
 pub fn vaddr(x: PhysAddr) -> VirtAddr {
     VirtAddr::new(x.as_u64() + PHYS_OFFSET)
 }
+
 pub fn paddr(x: VirtAddr) -> PhysAddr {
     PhysAddr::new(x.as_u64() - PHYS_OFFSET)
 }
