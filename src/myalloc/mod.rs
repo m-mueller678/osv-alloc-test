@@ -1,5 +1,5 @@
 use crate::frame_allocator::MmapFrameAllocator;
-use crate::frame_list::FrameList2M;
+use crate::frame_list::{FrameList2M, FrameListTrait};
 use crate::myalloc::quantum_storage::QuantumStorage;
 use crate::page_map::{PageMap, SmallCountHashMap};
 use crate::paging::{allocate_l2_tables, map_huge_page, unmap_huge_page};
@@ -14,7 +14,7 @@ use std::ptr;
 use std::sync::Mutex;
 use x86_64::structures::paging::mapper::{MapperFlushAll, UnmapError};
 use x86_64::structures::paging::{Mapper, Page, PageSize, PhysFrame, Size2MiB};
-use x86_64::VirtAddr;
+use x86_64::{PhysAddr, VirtAddr};
 
 const VIRTUAL_QUANTUM_BITS: u32 = 24;
 const MAX_MID_SIZE: usize = 16 * MB;
@@ -54,10 +54,43 @@ impl GlobalData {
         }
     }
 
+    pub fn new_no_mem(physical_size: usize, virt_size: usize) -> Self {
+        let frame_count = physical_size >> 21;
+        // these must be quantum aligned
+        let virt_area_start = 1u64 << 47;
+        let virt_area_end = virt_area_start + virt_size as u64;
+
+        let virt_pages = Page::range(
+            Page::containing_address(VirtAddr::new(virt_area_start)),
+            Page::containing_address(VirtAddr::new(virt_area_end)),
+        );
+
+        GlobalData {
+            allocs_per_page: PageMap::new(frame_count + frame_count / 4, virt_pages.start),
+            pages_per_quantum: SmallCountHashMap::with_num_slots(1 << 16),
+            quantum_storage: QuantumStorage::from_range(
+                ((virt_area_start & ADDRESS_BIT_MASK) >> VIRTUAL_QUANTUM_BITS) as u32
+                    ..((virt_area_end & ADDRESS_BIT_MASK) >> VIRTUAL_QUANTUM_BITS) as u32,
+            ),
+            available_frames: Mutex::new(
+                std::iter::successors(
+                    Some(PhysFrame::from_start_address(PhysAddr::new(1u64 << 47)).unwrap()),
+                    |a| Some(*a + 1),
+                )
+                .take(frame_count)
+                .collect(),
+            ),
+        }
+    }
+
     pub fn new(physical_size: usize, virt_size: usize) -> Self {
         assert_eq!(physical_size % Size2MiB::SIZE as usize, 0);
         assert_eq!(virt_size % (1 << VIRTUAL_QUANTUM_BITS), 0);
         assert!(virt_size <= 1 << 46);
+
+        if cfg!(feature = "no_mem") {
+            return Self::new_no_mem(physical_size, virt_size);
+        }
 
         let phys_pages = alloc_mmap::<Size2MiB>(physical_size / Size2MiB::SIZE as usize, false);
         for p in phys_pages {

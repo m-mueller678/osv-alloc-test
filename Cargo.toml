@@ -9,6 +9,7 @@ edition = "2021"
 default=[]
 hash_map_debug =[]
 log_rust_global_alloc=[]
+no_mem=[]
 
 [dependencies]
 libc = "0.2.153"
