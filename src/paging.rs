@@ -1,6 +1,9 @@
 use crate::frame_allocator::MmapFrameAllocator;
 use crate::util::PHYS_OFFSET;
+use std::hint::black_box;
 use std::mem::MaybeUninit;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering::Relaxed;
 use x86_64::registers::control::Cr3;
 use x86_64::structures::paging::page::PageRangeInclusive;
 use x86_64::structures::paging::page_table::PageTableEntry;
@@ -44,20 +47,12 @@ pub unsafe fn allocate_l2_tables(
     }
 }
 
-#[cfg(feature = "no_mem")]
-static NO_MEM_PAGE_TABLE: std::sync::OnceLock<
-    std::sync::Mutex<std::collections::BTreeMap<Page<Size2MiB>, PhysFrame<Size2MiB>>>,
-> = std::sync::OnceLock::new();
-
 pub unsafe fn map_huge_page(page: Page<Size2MiB>, frame: PhysFrame<Size2MiB>) {
     #![cfg_attr(feature = "no_mem", allow(unreachable_code))]
     #[cfg(feature = "no_mem")]
     {
-        NO_MEM_PAGE_TABLE
-            .get_or_init(Default::default)
-            .lock()
-            .unwrap()
-            .insert(page, frame);
+        black_box(page);
+        drop(frame);
         return;
     }
     let (l4_frame, _) = Cr3::read();
@@ -77,15 +72,20 @@ pub unsafe fn map_huge_page(page: Page<Size2MiB>, frame: PhysFrame<Size2MiB>) {
     );
 }
 
+#[cfg_attr(not(feature = "no_mem"), allow(dead_code))]
+pub fn next_fake_frame() -> PhysFrame<Size2MiB> {
+    static NEXT: AtomicU64 = AtomicU64::new(1 << 21);
+    let ret = NEXT.fetch_add(1 << 21, Relaxed);
+    PhysFrame::from_start_address(PhysAddr::new(ret)).unwrap()
+}
+
 pub unsafe fn unmap_huge_page(page: Page<Size2MiB>) -> PhysFrame<Size2MiB> {
     #![cfg_attr(feature = "no_mem", allow(unreachable_code))]
     #[cfg(feature = "no_mem")]
-    return NO_MEM_PAGE_TABLE
-        .get_or_init(Default::default)
-        .lock()
-        .unwrap()
-        .remove(&page)
-        .unwrap();
+    {
+        black_box(page);
+        return next_fake_frame();
+    }
     let (l4_frame, _) = Cr3::read();
     let l4 = VirtAddr::new(l4_frame.start_address().as_u64() + PHYS_OFFSET)
         .as_mut_ptr::<PageTableEntry>();

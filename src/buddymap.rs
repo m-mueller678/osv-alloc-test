@@ -165,7 +165,9 @@ impl<const H: usize> BuddyTower<H> {
     }
 
     fn insert_transfer_vector(&self, transfer_buffer: &mut Vec<u32>) {
-        MapperFlushAll::new().flush_all();
+        if !cfg!(feature = "no_mem") {
+            MapperFlushAll::new().flush_all();
+        }
         for x in &mut *transfer_buffer {
             self.insert(*x >> QUANTUM_ID_BITS, *x & mask::<u32>(QUANTUM_ID_BITS))
         }

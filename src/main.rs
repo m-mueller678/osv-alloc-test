@@ -105,10 +105,10 @@ enum AllocTestMode {
 
 impl AllocTestMode {
     fn index_range(self, size: usize) -> Range<usize> {
-        match self {
-            AllocTestMode::None => 0..0,
-            AllocTestMode::First => 0..1,
-            AllocTestMode::Full => 0..size,
+        match (cfg!(feature = "no_mem"), self) {
+            (false, AllocTestMode::First) => 0..1,
+            (false, AllocTestMode::Full) => 0..size,
+            (_, AllocTestMode::None) | (true, _) => 0..0,
         }
     }
 }

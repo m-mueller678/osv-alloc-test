@@ -74,7 +74,7 @@ impl GlobalData {
             ),
             available_frames: Mutex::new(
                 std::iter::successors(
-                    Some(PhysFrame::from_start_address(PhysAddr::new(1u64 << 47)).unwrap()),
+                    Some(PhysFrame::from_start_address(PhysAddr::new(1u64 << 21)).unwrap()),
                     |a| Some(*a + 1),
                 )
                 .take(frame_count)
