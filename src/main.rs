@@ -14,6 +14,7 @@ use std::thread::scope;
 use std::time::Instant;
 use tikv_jemallocator::Jemalloc;
 use virtual_alloc::myalloc::{GlobalData, LocalData};
+use virtual_alloc::profiling::profiling_tick;
 use virtual_alloc::util::{GB, MB, TB};
 use virtual_alloc::TestAlloc;
 
@@ -47,6 +48,8 @@ fn pin() {
 }
 
 fn main() {
+    virtual_alloc::profiling::init_profiling();
+
     let kernel_version = std::fs::read("/proc/version").unwrap_or_default();
     let kernel_version = String::from_utf8_lossy(&kernel_version);
     println!("/proc/version: {kernel_version:?}");
@@ -58,12 +61,12 @@ fn main() {
 
     // 1.664e5, 1.519e5, 1.524e5
     let test_mode = AllocTestMode::First;
-    let threads = 16;
-    let phys_size = 8 * GB;
+    let threads = 2;
+    let phys_size = 4 * GB;
     let virt_size = TB;
     let max_use = phys_size - phys_size / 4;
     let avg_alloc_size = 16 * MB;
-    let alloc_per_thread = 1_000_000;
+    let alloc_per_thread = 100_000_000_000;
 
     for alloc in allocs {
         println!("{alloc}:");
@@ -144,6 +147,7 @@ fn test_alloc<A: TestAlloc>(
 
                 unsafe {
                     while allocs.len() < concurrent_allocs_per_thread {
+                        profiling_tick();
                         let size = size_range.sample(&mut rng);
                         let ptr = a.alloc(layout(size)) as *mut usize;
                         assert!(!ptr.is_null());
@@ -157,6 +161,7 @@ fn test_alloc<A: TestAlloc>(
                     barrier.wait();
                     barrier.wait();
                     for _ in 0..allocs_per_thread {
+                        profiling_tick();
                         {
                             let (ptr, size) = allocs.pop_front().unwrap();
                             let expected_id = next_id - (concurrent_allocs_per_thread << 16);
@@ -180,6 +185,7 @@ fn test_alloc<A: TestAlloc>(
                     barrier.wait();
 
                     while let Some((ptr, size)) = allocs.pop_front() {
+                        profiling_tick();
                         let expected_id = next_id - (concurrent_allocs_per_thread << 16);
                         for i in mode.index_range(size) {
                             assert_eq!(ptr.add(i).read(), expected_id + i);

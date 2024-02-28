@@ -2,18 +2,18 @@
 module: hello_release hello_debug virtual_alloc_c
 
 hello_release: FORCE
-	cargo build --bin virtual_alloc --release --features tikv-jemallocator
+	cargo build --bin virtual_alloc --release --features bin_features --features puffin_profiling
 	cp target/release/virtual_alloc hello_release
 
 hello_debug: FORCE
-	cargo build --bin virtual_alloc --features tikv-jemallocator
+	cargo build --bin virtual_alloc --features bin_features --features puffin_profiling
 	cp target/debug/virtual_alloc hello_debug
 
 check_fmt:
 	cargo fmt
 	cargo check --lib
 	cargo check --bin virtual_alloc --lib --all-features
-	cargo check --bin virtual_alloc --features tikv-jemallocator
+	cargo check --bin virtual_alloc --features bin_features
 
 libvirtual_alloc_debug.a: FORCE
 	cargo build --lib --features hash_map_debug

@@ -10,8 +10,26 @@ pub mod myalloc;
 pub mod no_frame_allocator;
 pub mod page_map;
 pub mod paging;
+pub mod profiling;
 mod static_lib;
 pub mod util;
+
+#[cfg(feature = "puffin_profiling")]
+pub use puffin::{profile_function, profile_scope};
+
+#[cfg(not(feature = "puffin_profiling"))]
+#[macro_export]
+macro_rules! profile_function {
+    () => {};
+    ($data:expr) => {};
+}
+
+#[cfg(not(feature = "puffin_profiling"))]
+#[macro_export]
+macro_rules! profile_scope {
+    () => {};
+    ($data:expr) => {};
+}
 
 pub unsafe trait TestAlloc: Send {
     unsafe fn alloc(&mut self, layout: Layout) -> *mut u8;

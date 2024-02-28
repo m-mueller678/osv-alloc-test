@@ -3,6 +3,7 @@ use crate::frame_list::FrameList2M;
 use crate::myalloc::quantum_storage::QuantumStorage;
 use crate::page_map::{PageMap, SmallCountHashMap};
 use crate::paging::{allocate_l2_tables, map_huge_page, unmap_huge_page};
+use crate::profile_function;
 use crate::util::{alloc_mmap, page_table, MB, PHYS_OFFSET};
 use crate::TestAlloc;
 use ahash::RandomState;
@@ -141,6 +142,7 @@ pub struct LocalData<G: Deref<Target = GlobalData> + Send> {
 
 unsafe impl<G: Deref<Target = GlobalData> + Send> TestAlloc for LocalData<G> {
     unsafe fn alloc(&mut self, layout: Layout) -> *mut u8 {
+        profile_function!();
         if layout.size() == 0 {
             return VirtAddr::new(PHYS_OFFSET).as_mut_ptr();
         }
@@ -193,6 +195,7 @@ unsafe impl<G: Deref<Target = GlobalData> + Send> TestAlloc for LocalData<G> {
     }
 
     unsafe fn dealloc(&mut self, ptr: *mut u8, layout: Layout) {
+        profile_function!();
         if layout.size() == 0 {
             return;
         }
@@ -212,6 +215,7 @@ unsafe impl<G: Deref<Target = GlobalData> + Send> TestAlloc for LocalData<G> {
 
 impl<G: Deref<Target = GlobalData> + Send> LocalData<G> {
     fn get_frames(&mut self, count: usize) -> Result<(), ()> {
+        profile_function!();
         self.available_frames
             .steal_from_vec(&mut self.global.available_frames.lock().unwrap(), count)?;
         Ok(())
@@ -227,6 +231,7 @@ impl<G: Deref<Target = GlobalData> + Send> LocalData<G> {
     }
 
     fn alloc_large(&mut self, layout: Layout) -> *mut u8 {
+        profile_function!();
         debug_assert!(layout.align() <= (1 << 21));
         let (level, frame_count) = Self::large_alloc_info(layout.size());
         let Some(quantum) = self.global.quantum_storage.alloc(level, &mut self.rng) else {
@@ -263,6 +268,7 @@ impl<G: Deref<Target = GlobalData> + Send> LocalData<G> {
     }
 
     fn claim_quantum(&mut self) -> Result<(), ()> {
+        profile_function!();
         let q = self
             .global
             .quantum_storage
@@ -282,6 +288,7 @@ impl<G: Deref<Target = GlobalData> + Send> LocalData<G> {
     }
 
     fn dealloc_large(&mut self, ptr: *mut u8, layout: Layout) {
+        profile_function!();
         debug_assert!(layout.align() <= (1 << 21));
         let (level, frame_count) = Self::large_alloc_info(layout.size());
         let address = VirtAddr::from_ptr(ptr);
@@ -299,6 +306,7 @@ impl<G: Deref<Target = GlobalData> + Send> LocalData<G> {
     }
 
     fn release_frames(&mut self) {
+        profile_function!();
         if !self.available_frames.is_empty() {
             self.available_frames
                 .merge_into_vec(&mut self.global.available_frames.lock().unwrap());
@@ -306,6 +314,7 @@ impl<G: Deref<Target = GlobalData> + Send> LocalData<G> {
     }
 
     fn decrement_page(&mut self, p: Page<Size2MiB>) {
+        profile_function!();
         if let Some(x) = self.global.allocs_per_page.decrement(p) {
             self.available_frames.push(x);
             unsafe { unmap_huge_page(p) };

@@ -9,6 +9,8 @@ edition = "2021"
 default=[]
 hash_map_debug =[]
 log_rust_global_alloc=[]
+bin_features = ["tikv-jemallocator"]
+puffin_profiling = ["puffin","puffin_http"]
 
 [dependencies]
 libc = "0.2.153"
@@ -23,10 +25,12 @@ log = "0.4.20"
 array-init = "2.1.0"
 next-gen={version = "0.1.1",default-features = false}
 once_cell = "1.19.0"
+puffin = { version = "0.19.0",optional = true }
+puffin_http = { version = "0.16.0",optional = true}
 
 [[bin]]
 name = "virtual_alloc"
-required-features=["tikv-jemallocator"]
+required-features=["bin_features"]
 
 [lib]
 crate-type = ["staticlib","lib"]
