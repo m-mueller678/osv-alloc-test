@@ -11,7 +11,10 @@ pub mod no_frame_allocator;
 pub mod page_map;
 pub mod paging;
 pub mod profiling;
+#[cfg(feature = "local_api_clib")]
 mod static_lib;
+#[cfg(feature = "global_api_clib")]
+mod static_lib_global;
 pub mod util;
 
 #[cfg(feature = "puffin_profiling")]

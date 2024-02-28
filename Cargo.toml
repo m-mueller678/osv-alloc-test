@@ -11,6 +11,8 @@ hash_map_debug =[]
 log_rust_global_alloc=[]
 bin_features = ["tikv-jemallocator"]
 puffin_profiling = ["puffin","puffin_http"]
+local_api_clib=[]
+global_api_clib=[]
 
 [dependencies]
 libc = "0.2.153"

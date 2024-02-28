@@ -16,11 +16,19 @@ check_fmt:
 	cargo check --bin virtual_alloc --features bin_features
 
 libvirtual_alloc_debug.a: FORCE
-	cargo build --lib --features hash_map_debug
+	cargo build --lib --features hash_map_debug --features local_api_clib
 	cp target/debug/libvirtual_alloc.a $@
 
 libvirtual_alloc_release.a: FORCE
-	cargo build --lib --release
+	cargo build --lib --release --features local_api_clib
+	cp target/release/libvirtual_alloc.a $@
+
+libvirtual_alloc_global_debug.a: FORCE
+	cargo build --lib --features hash_map_debug --features global_api_clib
+	cp target/debug/libvirtual_alloc.a $@
+
+libvirtual_alloc_global_release.a: FORCE
+	cargo build --lib --release --features global_api_clib
 	cp target/release/libvirtual_alloc.a $@
 
 virtual_alloc_c: libvirtual_alloc_debug.a main.c
