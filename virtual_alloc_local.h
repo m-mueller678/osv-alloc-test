@@ -2,6 +2,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct{
     uint64_t _private[11];
 } VirtualAllocHandle;
@@ -24,3 +28,7 @@ void *virtual_alloc_alloc(VirtualAllocHandle *local, uint64_t size, uint64_t ali
 // The size and alignment must exactly match the values passed during allocation.
 // It is safe to deallocate memory using a different handle than was used for the allocation.
 void virtual_alloc_free(VirtualAllocHandle *local, uint64_t size, uint64_t align, void *ptr);
+
+#ifdef __cplusplus
+}
+#endif

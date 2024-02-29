@@ -7,3 +7,5 @@
 /libvirtual_alloc_debug.a
 /libvirtual_alloc_release.a
 /virtual_alloc_c
+/libvirtual_alloc_global_release.a
+/libvirtual_alloc_global_debug.a
