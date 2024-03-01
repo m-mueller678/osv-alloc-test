@@ -27,13 +27,17 @@ thread_local! {
 #[no_mangle]
 pub unsafe extern "C" fn global_virtual_alloc_init(physical_size: u64, virtual_size: u64) {
     catch(|| {
+        let mut did_init=false;
+        eprintln!("init start");
         GLOBAL
-            .set(GlobalData::new(
-                physical_size as usize,
-                virtual_size as usize,
-            ))
-            .ok()
-            .expect("multiple calls to virtual_alloc_init_global");
+            .get_or_init(||{
+                did_init=true;
+                GlobalData::new(
+                    physical_size as usize,
+                    virtual_size as usize,
+                )
+            });
+        eprintln!("init done: {did_init:?}");
     })
 }
 
