@@ -9,7 +9,7 @@ use x86_64::structures::paging::{
 };
 use x86_64::{PhysAddr, VirtAddr};
 
-pub unsafe fn allocate_l2_tables(
+pub fn allocate_l2_tables(
     range: PageRangeInclusive<Size2MiB>,
     frame_allocator: &mut MmapFrameAllocator,
 ) {
@@ -17,10 +17,13 @@ pub unsafe fn allocate_l2_tables(
     let l4 = VirtAddr::new(l4_frame.start_address().as_u64() + PHYS_OFFSET)
         .as_mut_ptr::<PageTableEntry>();
     for i4 in usize::from(range.start.p4_index())..=usize::from(range.end.p4_index()) {
-        let l4_entry = ensure_present(l4.add(i4), frame_allocator);
+        let l4_entry = unsafe { ensure_present(l4.add(i4), frame_allocator).pte };
         assert!(l4_entry.flags().contains(PageTableFlags::PRESENT));
         let l3 = VirtAddr::new(
-            l4_entry.frame().unwrap_unchecked().start_address().as_u64() + PHYS_OFFSET,
+            unsafe { l4_entry.frame().unwrap_unchecked() }
+                .start_address()
+                .as_u64()
+                + PHYS_OFFSET,
         )
         .as_mut_ptr::<PageTableEntry>();
         let i3_start = if i4 == usize::from(range.start.p4_index()) {
@@ -34,8 +37,30 @@ pub unsafe fn allocate_l2_tables(
             511
         };
         for i3 in i3_start..=i3_end {
-            if l3.add(i3).read().is_unused() {
-                ensure_present(l3.add(i3), frame_allocator);
+            let EnsurePresent {
+                pte: l3_entry,
+                is_new,
+            } = unsafe { ensure_present(l3.add(i3), frame_allocator) };
+            if !is_new {
+                let l2_frame = l3_entry.frame().unwrap();
+                let l2 = VirtAddr::new(l2_frame.start_address().as_u64() + PHYS_OFFSET)
+                    .as_mut_ptr::<PageTableEntry>();
+                let i2_start = if i3 == i3_start {
+                    usize::from(range.start.p2_index())
+                } else {
+                    0
+                };
+                let i2_end = if i3 == i3_end {
+                    usize::from(range.end.p2_index())
+                } else {
+                    512
+                };
+                for i2 in i2_start..=i2_end {
+                    assert!(
+                        unsafe { (*l2.add(i2)).is_unused() },
+                        "found mapped page inside virtual allocation"
+                    )
+                }
             }
         }
     }
@@ -89,14 +114,23 @@ pub unsafe fn unmap_huge_page(page: Page<Size2MiB>) -> PhysFrame<Size2MiB> {
 pub fn vaddr(x: PhysAddr) -> VirtAddr {
     VirtAddr::new(x.as_u64() + PHYS_OFFSET)
 }
+
 pub fn paddr(x: VirtAddr) -> PhysAddr {
     PhysAddr::new(x.as_u64() - PHYS_OFFSET)
 }
 
+struct EnsurePresent {
+    pte: PageTableEntry,
+    is_new: bool,
+}
+
+/// pe must not be concurrently written to.
+/// Hopefully osv does not do that.
 unsafe fn ensure_present(
     pe: *mut PageTableEntry,
     frame_allocator: &mut MmapFrameAllocator,
-) -> PageTableEntry {
+) -> EnsurePresent {
+    let is_new = false;
     {
         frame_allocator.refill();
         let pe = &mut *pe;
@@ -112,5 +146,8 @@ unsafe fn ensure_present(
             )
         }
     }
-    pe.read()
+    EnsurePresent {
+        pte: pe.read(),
+        is_new,
+    }
 }

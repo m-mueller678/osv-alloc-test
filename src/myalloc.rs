@@ -10,10 +10,12 @@ use ahash::RandomState;
 use rand::rngs::SmallRng;
 use rand::SeedableRng;
 use std::alloc::Layout;
+
 use std::ops::Deref;
 use std::ptr;
 use std::sync::Mutex;
-use x86_64::structures::paging::mapper::{MapperFlushAll, UnmapError};
+
+use x86_64::structures::paging::page::PageRangeInclusive;
 use x86_64::structures::paging::{Mapper, Page, PageSize, PhysFrame, Size2MiB};
 use x86_64::VirtAddr;
 
@@ -55,6 +57,35 @@ impl GlobalData {
         }
     }
 
+    /// returned range is quantum aligned
+    #[allow(clippy::ptr_arg)]
+    fn claim_virtual_space(
+        size: usize,
+        _frames: &mut Vec<PhysFrame<Size2MiB>>,
+    ) -> PageRangeInclusive<Size2MiB> {
+        let virt_pages_exclusive =
+            alloc_mmap(size + (1 << VIRTUAL_QUANTUM_BITS) - (1 << 21), false);
+        let virt_pages_inclusive =
+            Page::range_inclusive(virt_pages_exclusive.start, virt_pages_exclusive.end - 1);
+
+        println!("allocating l2 tables");
+        {
+            let mut frame_allocator = MmapFrameAllocator::default();
+            allocate_l2_tables(virt_pages_inclusive, &mut frame_allocator);
+        }
+
+        let start = virt_pages_inclusive
+            .start
+            .start_address()
+            .as_u64()
+            .next_multiple_of(1 << VIRTUAL_QUANTUM_BITS);
+        assert!(start + (size as u64) < 1 << 47);
+        Page::range_inclusive(
+            Page::from_start_address(VirtAddr::new(start)).unwrap(),
+            Page::from_start_address(VirtAddr::new(start + size as u64)).unwrap() - 1,
+        )
+    }
+
     pub fn new(physical_size: usize, virt_size: usize) -> Self {
         assert_eq!(physical_size % Size2MiB::SIZE as usize, 0);
         assert_eq!(virt_size % (1 << VIRTUAL_QUANTUM_BITS), 0);
@@ -66,64 +97,26 @@ impl GlobalData {
                 p.start_address().as_mut_ptr::<u8>().write(0);
             }
         }
-        // these must be quantum aligned
-        let virt_area_start = 1u64 << 47;
-        let virt_area_end = virt_area_start + virt_size as u64;
+        let mut available_frames: Vec<_> = phys_pages
+            .into_iter()
+            .map(|p| unsafe { page_table() }.translate_page(p).unwrap())
+            .collect();
 
-        let virt_pages = Page::range(
-            Page::containing_address(VirtAddr::new(virt_area_start)),
-            Page::containing_address(VirtAddr::new(virt_area_end)),
-        );
-        println!("allocating l2 tables");
-        unsafe {
-            let mut frame_allocator = MmapFrameAllocator::default();
-            allocate_l2_tables(
-                Page::range_inclusive(virt_pages.start, virt_pages.end - 1),
-                &mut frame_allocator,
-            );
-        }
-        println!("unmapping virtual range pages");
-        {
-            let _pt = unsafe { page_table() };
-            for (i, p) in virt_pages.into_iter().enumerate() {
-                if cfg!(debug_assertions) && i % (1 << 18) == 0 {
-                    eprintln!(
-                        "{i:8}/{:8} (({:.2})%)",
-                        virt_pages.count(),
-                        i as f64 / virt_pages.count() as f64 * 100.0
-                    );
-                }
-                match unsafe { page_table() }.unmap(p) {
-                    Ok((f, flush)) => {
-                        println!("unmapped {f:?} from virtual range");
-                        flush.ignore();
-                    }
-                    Err(UnmapError::PageNotMapped) => {
-                        continue;
-                    }
-                    Err(e) => panic!("cannot unmap {p:?} in virtual range: {e:?}"),
-                }
-            }
-            MapperFlushAll::new().flush_all();
-        }
-        println!("unmapping complete");
+        let virt_pages_inclusive = Self::claim_virtual_space(virt_size, &mut available_frames);
 
         GlobalData {
             allocs_per_page: PageMap::new(
                 phys_pages.count() + phys_pages.count() / 4,
-                virt_pages.start,
+                virt_pages_inclusive.start,
             ),
             pages_per_quantum: SmallCountHashMap::with_num_slots(1 << 16),
             quantum_storage: QuantumStorage::from_range(
-                ((virt_area_start & ADDRESS_BIT_MASK) >> VIRTUAL_QUANTUM_BITS) as u32
-                    ..((virt_area_end & ADDRESS_BIT_MASK) >> VIRTUAL_QUANTUM_BITS) as u32,
+                ((virt_pages_inclusive.start.start_address().as_u64() & ADDRESS_BIT_MASK)
+                    >> VIRTUAL_QUANTUM_BITS) as u32
+                    ..(((virt_pages_inclusive.end + 1).start_address().as_u64() & ADDRESS_BIT_MASK)
+                        >> VIRTUAL_QUANTUM_BITS) as u32,
             ),
-            available_frames: Mutex::new(
-                phys_pages
-                    .into_iter()
-                    .map(|p| unsafe { page_table() }.translate_page(p).unwrap())
-                    .collect(),
-            ),
+            available_frames: Mutex::new(available_frames),
         }
     }
 }
