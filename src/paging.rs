@@ -13,6 +13,7 @@ pub fn allocate_l2_tables(
     range: PageRangeInclusive<Size2MiB>,
     frame_allocator: &mut MmapFrameAllocator,
 ) {
+    let mut leaked_frames = 0;
     let (l4_frame, _) = Cr3::read();
     let l4 = VirtAddr::new(l4_frame.start_address().as_u64() + PHYS_OFFSET)
         .as_mut_ptr::<PageTableEntry>();
@@ -56,14 +57,18 @@ pub fn allocate_l2_tables(
                     512
                 };
                 for i2 in i2_start..=i2_end {
-                    assert!(
-                        unsafe { (*l2.add(i2)).is_unused() },
-                        "found mapped page inside virtual allocation"
-                    )
+                    unsafe {
+                        let l2e = &mut *(l2.add(i2));
+                        if l2e.flags().contains(PageTableFlags::PRESENT) {
+                            leaked_frames += 1;
+                        }
+                        *l2e = PageTableEntry::new();
+                    }
                 }
             }
         }
     }
+    println!("leaked {leaked_frames} frames");
 }
 
 pub unsafe fn map_huge_page(page: Page<Size2MiB>, frame: PhysFrame<Size2MiB>) {
@@ -134,7 +139,7 @@ unsafe fn ensure_present(
     {
         frame_allocator.refill();
         let pe = &mut *pe;
-        if !pe.flags().contains(PageTableFlags::PRESENT) {
+        if pe.is_unused() {
             assert!(pe.is_unused(), "unexpected page flags: {:?}", pe.flags());
             let new_frame = frame_allocator.allocate_frame().unwrap().start_address();
             vaddr(new_frame)
@@ -144,6 +149,8 @@ unsafe fn ensure_present(
                 new_frame,
                 PageTableFlags::PRESENT | PageTableFlags::WRITABLE,
             )
+        } else {
+            assert!(pe.flags().contains(PageTableFlags::PRESENT));
         }
     }
     EnsurePresent {

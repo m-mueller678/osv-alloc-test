@@ -63,8 +63,7 @@ impl GlobalData {
         size: usize,
         _frames: &mut Vec<PhysFrame<Size2MiB>>,
     ) -> PageRangeInclusive<Size2MiB> {
-        let virt_pages_exclusive =
-            alloc_mmap(size + (1 << VIRTUAL_QUANTUM_BITS) - (1 << 21), false);
+        let virt_pages_exclusive = alloc_mmap((size + (1 << VIRTUAL_QUANTUM_BITS)) >> 21, false);
         let virt_pages_inclusive =
             Page::range_inclusive(virt_pages_exclusive.start, virt_pages_exclusive.end - 1);
 

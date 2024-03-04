@@ -66,7 +66,7 @@ fn main() {
     let virt_size = TB;
     let max_use = phys_size - phys_size / 4;
     let avg_alloc_size = 16 * MB;
-    let alloc_per_thread = 100_000_000_000;
+    let alloc_per_thread = 1_000_000;
 
     for alloc in allocs {
         println!("{alloc}:");

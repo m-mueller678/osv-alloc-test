@@ -30,6 +30,10 @@ pub fn alloc_mmap<P: PageSize>(count: usize, zeroed: bool) -> PageRange<P> {
             0,
         ) as *mut u8
     };
+    if (p as i64) == -1 {
+        panic!("mmap failed: {:?}", std::io::Error::last_os_error());
+    }
+
     assert!(!p.is_null());
     let p = Page::<P>::from_start_address(VirtAddr::from_ptr(p)).unwrap();
     Page::range(p, p + count as u64)
