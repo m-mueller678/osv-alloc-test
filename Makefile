@@ -31,7 +31,7 @@ libvirtual_alloc_global_release.a: FORCE
 	cargo build --lib --release --features global_api_clib
 	cp target/release/libvirtual_alloc.a $@
 
-virtual_alloc_c: libvirtual_alloc_debug.a main.c
+virtual_alloc_c: libvirtual_alloc_debug.a *.c *.h
 	gcc main.c libvirtual_alloc_debug.a -g -o $@
 
 FORCE:

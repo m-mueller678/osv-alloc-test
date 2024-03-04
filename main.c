@@ -1,4 +1,4 @@
-#include "virtual_alloc.h"
+#include "virtual_alloc_local.h"
 
 int main(){
     virtual_alloc_init_global(1<<30,((uint64_t)(1))<<40);
