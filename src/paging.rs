@@ -54,12 +54,13 @@ pub fn allocate_l2_tables(
                 let i2_end = if i3 == i3_end {
                     usize::from(range.end.p2_index())
                 } else {
-                    512
+                    511
                 };
                 for i2 in i2_start..=i2_end {
                     unsafe {
                         let l2e = &mut *(l2.add(i2));
                         if l2e.flags().contains(PageTableFlags::PRESENT) {
+                            eprintln!("leaking frame {l2e:?}");
                             leaked_frames += 1;
                         }
                         *l2e = PageTableEntry::new();

@@ -40,18 +40,18 @@ pub unsafe extern "C" fn global_virtual_alloc_init(physical_size: u64, virtual_s
 #[no_mangle]
 pub unsafe extern "C" fn global_virtual_alloc_alloc(size: u64, align: u64) -> *mut libc::c_void {
     catch(|| {
-        eprintln!("alloc {size}");
+        // eprintln!("alloc {size}");
         let r = LOCAL.with(|l| {
             l.borrow_mut().alloc(Layout::from_size_align_unchecked(
                 size as usize,
                 align as usize,
             )) as *mut libc::c_void
         });
-        eprintln!("done alloc {size}");
+        // eprintln!("done alloc {size}");
         for i in 0..size {
             (r as *mut u8).add(i as usize).write(0);
         }
-        eprintln!("done zero {size}");
+        // eprintln!("done zero {size}");
         r
     })
 }
@@ -59,14 +59,14 @@ pub unsafe extern "C" fn global_virtual_alloc_alloc(size: u64, align: u64) -> *m
 #[no_mangle]
 pub unsafe extern "C" fn global_virtual_alloc_free(size: u64, align: u64, ptr: *mut libc::c_void) {
     catch(|| {
-        eprintln!("dealloc {size}");
+        // eprintln!("dealloc {size}");
         LOCAL.with(|l| {
             l.borrow_mut().dealloc(
                 ptr as *mut u8,
                 Layout::from_size_align_unchecked(size as usize, align as usize),
             )
         });
-        eprintln!("done dealloc {size}");
+        // eprintln!("done dealloc {size}");
     })
 }
 
