@@ -14,8 +14,10 @@ use std::alloc::Layout;
 use std::ops::Deref;
 use std::ptr;
 use std::sync::Mutex;
+use x86_64::registers::control::Cr3;
 
 use x86_64::structures::paging::page::PageRangeInclusive;
+use x86_64::structures::paging::page_table::PageTableEntry;
 use x86_64::structures::paging::{Mapper, Page, PageSize, PhysFrame, Size2MiB};
 use x86_64::VirtAddr;
 
@@ -91,6 +93,8 @@ impl GlobalData {
         assert!(virt_size <= 1 << 46);
 
         let phys_pages = alloc_mmap::<Size2MiB>(physical_size / Size2MiB::SIZE as usize, false);
+        dbg!(&phys_pages);
+        dbg!(phys_pages.start.start_address().as_u64().trailing_zeros());
         for p in phys_pages {
             unsafe {
                 p.start_address().as_mut_ptr::<u8>().write(0);
@@ -98,7 +102,30 @@ impl GlobalData {
         }
         let mut available_frames: Vec<_> = phys_pages
             .into_iter()
-            .map(|p| unsafe { page_table() }.translate_page(p).unwrap())
+            .filter_map(|p| {
+                let x = (unsafe { page_table() }).translate_page(p);
+                x.map_err(|e| {
+                    eprintln!("failed to claim frame for {p:?}: {e:?}");
+                    unsafe {
+                        dbg!(p.p4_index(), p.p3_index(), p.p2_index());
+                        let (l4_frame, _) = Cr3::read();
+                        let l4 = VirtAddr::new(l4_frame.start_address().as_u64() + PHYS_OFFSET)
+                            .as_mut_ptr::<PageTableEntry>();
+                        let l4e = l4.add(p.p4_index().into()).read();
+                        let l3_frame = l4e.frame().unwrap_unchecked();
+                        let l3 = VirtAddr::new(l3_frame.start_address().as_u64() + PHYS_OFFSET)
+                            .as_mut_ptr::<PageTableEntry>();
+                        let l3e = l3.add(p.p3_index().into()).read();
+                        let l2_frame = l3e.frame().unwrap_unchecked();
+                        let l2 = VirtAddr::new(l2_frame.start_address().as_u64() + PHYS_OFFSET)
+                            .as_mut_ptr::<PageTableEntry>();
+                        let l2e = l2.add(p.p2_index().into()).read();
+                        dbg!(l4, l3, l2, l4e, l3e, l2e);
+                    }
+                    e
+                })
+                .ok()
+            })
             .collect();
 
         let virt_pages_inclusive = Self::claim_virtual_space(virt_size, &mut available_frames);
