@@ -6,6 +6,7 @@ use std::cell::RefCell;
 use std::ops::Deref;
 use std::panic::{catch_unwind, UnwindSafe};
 use std::sync::OnceLock;
+use tracing::info;
 
 type CLocalData = LocalData<GlobalGlobal>;
 
@@ -28,12 +29,14 @@ thread_local! {
 pub unsafe extern "C" fn global_virtual_alloc_init(physical_size: u64, virtual_size: u64) {
     catch(|| {
         let mut did_init = false;
-        eprintln!("init start");
         GLOBAL.get_or_init(|| {
             did_init = true;
+            tracing_subscriber::fmt()
+                .event_format(tracing_subscriber::fmt::format().without_time().compact())
+                .init();
             GlobalData::new(physical_size as usize, virtual_size as usize)
         });
-        eprintln!("init done: {did_init:?}");
+        info!("init done: {did_init:?}");
     })
 }
 

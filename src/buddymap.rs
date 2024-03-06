@@ -1,12 +1,14 @@
 use crate::util::mask;
 
 use crate::paging::tlb_flush_global;
+use itertools::Itertools;
 use rand::distributions::Distribution;
 use rand::distributions::Uniform;
 use rand::Rng;
 use std::ops::Range;
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::atomic::{AtomicU64, Ordering};
+use tracing::{info, warn};
 
 const QUANTUM_ID_BITS: u32 = 27;
 const TRANSFER_BUFFER_LEVEL_BITS: u32 = 32 - QUANTUM_ID_BITS;
@@ -129,16 +131,20 @@ impl<const H: usize> BuddyTower<H> {
     }
 
     pub fn print_counts(&self) {
-        for (i, l) in self.maps.iter().enumerate() {
-            print!(
-                "{i:2}:{:4}, ",
-                l.pairs
-                    .iter()
-                    .map(|x| x.load(Relaxed).count_ones())
-                    .sum::<u32>()
-            )
-        }
-        println!();
+        info!(
+            "quantum counts: {:?}",
+            self.maps
+                .iter()
+                .enumerate()
+                .map(|(i, l)| (
+                    i,
+                    l.pairs
+                        .iter()
+                        .map(|x| x.load(Relaxed).count_ones())
+                        .sum::<u32>()
+                ))
+                .format(",")
+        );
     }
 
     pub fn steal_all_and_flush(&self, other: &Self, transfer_buffer: &mut Vec<u32>) {
@@ -149,7 +155,7 @@ impl<const H: usize> BuddyTower<H> {
                 while taken != 0 {
                     if transfer_buffer.len() == transfer_buffer.capacity() {
                         // this should never happen with properly sized transfer vector
-                        eprintln!("ran out of transfer buffer space");
+                        warn!("ran out of transfer buffer space");
                         self.insert_transfer_vector(transfer_buffer);
                     }
                     let bit = taken.trailing_zeros();

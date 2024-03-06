@@ -3,6 +3,7 @@ use crate::myalloc::VIRTUAL_QUANTUM_BITS;
 use rand::Rng;
 use std::ops::Range;
 use std::sync::Mutex;
+use tracing::{error, info};
 
 pub struct QuantumStorage {
     available_quanta: BuddyTower<{ 48 - VIRTUAL_QUANTUM_BITS as usize }>,
@@ -18,7 +19,7 @@ impl QuantumStorage {
             }
             self.recycle();
         }
-        eprintln!("failed to reclaim sufficient virtual memory");
+        error!("failed to reclaim sufficient virtual memory");
         None
     }
 
@@ -42,7 +43,7 @@ impl QuantumStorage {
     }
 
     pub fn from_range(range: Range<u32>) -> Self {
-        eprintln!("quantum range: {:?}", &range);
+        info!("quantum range: {:?}", &range);
         QuantumStorage {
             available_quanta: BuddyTower::from_range(range.clone()),
             released_quanta: BuddyTower::new(range.len(), range.start),

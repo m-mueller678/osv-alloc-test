@@ -14,6 +14,7 @@ use std::alloc::Layout;
 use std::ops::Deref;
 use std::ptr;
 use std::sync::Mutex;
+use tracing::{error, info};
 use x86_64::registers::control::Cr3;
 
 use x86_64::structures::paging::page::PageRangeInclusive;
@@ -69,7 +70,7 @@ impl GlobalData {
         let virt_pages_inclusive =
             Page::range_inclusive(virt_pages_exclusive.start, virt_pages_exclusive.end - 1);
 
-        println!("allocating l2 tables");
+        info!("allocating l2 tables");
         {
             let mut frame_allocator = MmapFrameAllocator::default();
             allocate_l2_tables(virt_pages_inclusive, &mut frame_allocator);
@@ -105,7 +106,7 @@ impl GlobalData {
             .filter_map(|p| {
                 let x = (unsafe { page_table() }).translate_page(p);
                 x.map_err(|e| {
-                    eprintln!("failed to claim frame for {p:?}: {e:?}");
+                    error!("failed to claim frame for {p:?}: {e:?}");
                     unsafe {
                         dbg!(p.p4_index(), p.p3_index(), p.p2_index());
                         let (l4_frame, _) = Cr3::read();
@@ -185,7 +186,7 @@ unsafe impl<G: Deref<Target = GlobalData> + Send> TestAlloc for LocalData<G> {
             let max_page = Page::<Size2MiB>::containing_address(VirtAddr::new(aligned_bump) - 1u64);
             let required_frames = self.current_page - min_page;
             if self.get_frames(required_frames as usize).is_err() {
-                eprintln!("out of memory");
+                error!("out of memory");
                 return ptr::null_mut();
             }
             let current_quantum = address_to_quantum(self.current_page.start_address());

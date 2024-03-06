@@ -1,6 +1,7 @@
 use crate::frame_allocator::MmapFrameAllocator;
 use crate::util::PHYS_OFFSET;
 use std::mem::MaybeUninit;
+use tracing::warn;
 use x86_64::registers::control::Cr3;
 use x86_64::structures::paging::page::PageRangeInclusive;
 use x86_64::structures::paging::page_table::PageTableEntry;
@@ -60,7 +61,7 @@ pub fn allocate_l2_tables(
                     unsafe {
                         let l2e = &mut *(l2.add(i2));
                         if l2e.flags().contains(PageTableFlags::PRESENT) {
-                            eprintln!("leaking frame {l2e:?}");
+                            warn!("leaking frame {l2e:?}");
                             leaked_frames += 1;
                         }
                         *l2e = PageTableEntry::new();
@@ -69,9 +70,10 @@ pub fn allocate_l2_tables(
             }
         }
     }
-    println!("global tlb flush");
     tlb_flush_global();
-    println!("leaked {leaked_frames} frames");
+    if leaked_frames > 0 {
+        warn!("leaked {leaked_frames} frames");
+    }
 }
 
 pub fn tlb_flush_global() {
