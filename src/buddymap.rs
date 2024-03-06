@@ -1,12 +1,12 @@
 use crate::util::mask;
 
+use crate::paging::tlb_flush_global;
 use rand::distributions::Distribution;
 use rand::distributions::Uniform;
 use rand::Rng;
 use std::ops::Range;
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::atomic::{AtomicU64, Ordering};
-use x86_64::structures::paging::mapper::MapperFlushAll;
 
 const QUANTUM_ID_BITS: u32 = 27;
 const TRANSFER_BUFFER_LEVEL_BITS: u32 = 32 - QUANTUM_ID_BITS;
@@ -165,7 +165,7 @@ impl<const H: usize> BuddyTower<H> {
     }
 
     fn insert_transfer_vector(&self, transfer_buffer: &mut Vec<u32>) {
-        MapperFlushAll::new().flush_all();
+        tlb_flush_global();
         for x in &mut *transfer_buffer {
             self.insert(*x >> QUANTUM_ID_BITS, *x & mask::<u32>(QUANTUM_ID_BITS))
         }

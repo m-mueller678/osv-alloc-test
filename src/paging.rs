@@ -69,7 +69,15 @@ pub fn allocate_l2_tables(
             }
         }
     }
+    println!("global tlb flush");
+    tlb_flush_global();
     println!("leaked {leaked_frames} frames");
+}
+
+pub fn tlb_flush_global() {
+    unsafe {
+        libc::syscall(0x1000);
+    }
 }
 
 pub unsafe fn map_huge_page(page: Page<Size2MiB>, frame: PhysFrame<Size2MiB>) {
