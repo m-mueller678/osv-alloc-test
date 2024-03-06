@@ -94,8 +94,7 @@ impl GlobalData {
         assert!(virt_size <= 1 << 46);
 
         let phys_pages = alloc_mmap::<Size2MiB>(physical_size / Size2MiB::SIZE as usize, false);
-        dbg!(&phys_pages);
-        dbg!(phys_pages.start.start_address().as_u64().trailing_zeros());
+        info!("phys pages: {:?}", &phys_pages);
         for p in phys_pages {
             unsafe {
                 p.start_address().as_mut_ptr::<u8>().write(0);

@@ -81,7 +81,7 @@ pub struct BuddyTower<const H: usize> {
 impl<const H: usize> BuddyTower<H> {
     pub fn new(quantum_count: usize, base_quantum: u32) -> Self {
         assert!(H < (1usize << TRANSFER_BUFFER_LEVEL_BITS));
-        dbg!(quantum_count);
+        info!("quantum_count={quantum_count}");
         BuddyTower {
             base_quantum,
             maps: array_init::array_init(|i| BuddyMap::new(quantum_count.div_ceil(1 << i))),
