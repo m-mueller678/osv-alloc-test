@@ -185,7 +185,7 @@ unsafe impl<G: Deref<Target = GlobalData> + Send> TestAlloc for LocalData<G> {
             let max_page = Page::<Size2MiB>::containing_address(VirtAddr::new(aligned_bump) - 1u64);
             let required_frames = self.current_page - min_page;
             if self.get_frames(required_frames as usize).is_err() {
-                error!("out of memory");
+                error!(size=layout.size(),"allocation failed");
                 return ptr::null_mut();
             }
             let current_quantum = address_to_quantum(self.current_page.start_address());
@@ -258,6 +258,7 @@ impl<G: Deref<Target = GlobalData> + Send> LocalData<G> {
         };
         if self.get_frames(frame_count).is_err() {
             self.global.quantum_storage.dealloc_clean(level, quantum);
+            error!(size=layout.size(),"allocation failed");
             return ptr::null_mut();
         }
         let first_page = Page::<Size2MiB>::containing_address(VirtAddr::new(
