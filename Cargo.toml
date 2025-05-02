@@ -39,3 +39,6 @@ required-features=["bin_features"]
 [lib]
 crate-type = ["staticlib","lib"]
 name= "virtual_alloc"
+
+[profile.release]
+debug = 2
