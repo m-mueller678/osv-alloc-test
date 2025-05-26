@@ -13,6 +13,7 @@ bin_features = ["tikv-jemallocator"]
 puffin_profiling = ["puffin","puffin_http"]
 local_api_clib=[]
 global_api_clib=[]
+log_allocations=[]
 
 [dependencies]
 libc = "0.2.153"

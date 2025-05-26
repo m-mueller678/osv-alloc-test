@@ -11,6 +11,13 @@ pub mod no_frame_allocator;
 pub mod page_map;
 pub mod paging;
 pub mod profiling;
+#[cfg(feature = "log_allocations")]
+pub mod log_allocs;
+#[cfg(not(feature = "log_allocations"))]
+mod log_allocs{
+    pub fn log_alloc(_size:isize){}
+    pub fn flush_alloc_log(){}
+}
 #[cfg(feature = "local_api_clib")]
 mod static_lib;
 #[cfg(feature = "global_api_clib")]

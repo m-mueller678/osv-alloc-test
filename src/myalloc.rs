@@ -21,6 +21,7 @@ use x86_64::structures::paging::page::PageRangeInclusive;
 use x86_64::structures::paging::page_table::PageTableEntry;
 use x86_64::structures::paging::{Mapper, Page, PageSize, PhysFrame, Size2MiB};
 use x86_64::VirtAddr;
+use crate::log_allocs::log_alloc;
 
 const VIRTUAL_QUANTUM_BITS: u32 = 24;
 const MAX_MID_SIZE: usize = 16 * MB;
@@ -161,6 +162,7 @@ pub struct LocalData<G: Deref<Target = GlobalData> + Send> {
 
 unsafe impl<G: Deref<Target = GlobalData> + Send> TestAlloc for LocalData<G> {
     unsafe fn alloc(&mut self, layout: Layout) -> *mut u8 {
+        log_alloc(layout.size() as isize);
         profile_function!();
         if layout.size() == 0 {
             return VirtAddr::new(PHYS_OFFSET).as_mut_ptr();
@@ -214,6 +216,7 @@ unsafe impl<G: Deref<Target = GlobalData> + Send> TestAlloc for LocalData<G> {
     }
 
     unsafe fn dealloc(&mut self, ptr: *mut u8, layout: Layout) {
+        log_alloc(-(layout.size() as isize));
         profile_function!();
         if layout.size() == 0 {
             return;
