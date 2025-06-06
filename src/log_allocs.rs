@@ -42,7 +42,7 @@ pub fn log_alloc(size: isize) {
 
 fn write_logs(l: &LocalBuffer, out: &mut impl Write, flush_id: u64) {
     let len = l.buf_len.load(Relaxed);
-    write!(out, "c1f04237,{id},{}", l.id).unwrap();
+    write!(out, "c1f04237,{flush_id},{}", l.id).unwrap();
     if l.clean.swap(true, Relaxed) {
         for (time, event) in &l.buf[..len] {
             let time: u64 = time.load(Relaxed);
@@ -52,7 +52,8 @@ fn write_logs(l: &LocalBuffer, out: &mut impl Write, flush_id: u64) {
             write!(out, ";{time},{event}",).unwrap();
         }
     } else {
-        assert_eq!(flush_id, 0);
+        let msg = LogAllocMessage::Dirty as isize;
+        write!(out, ";{msg},{msg}").unwrap();
     }
     writeln!(out).unwrap();
     l.buf_len.store(0, Relaxed);
