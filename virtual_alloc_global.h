@@ -17,7 +17,7 @@ void * global_virtual_alloc_alloc(uint64_t size, uint64_t align);
 // The size and alignment must exactly match the values passed during allocation.
 void global_virtual_alloc_free(uint64_t size, uint64_t align, void *ptr);
 
-void global_virtual_alloc_flush_log();
+void global_virtual_alloc_flush_log(uint64_t id);
 void global_virtual_alloc_log_alloc(int64_t size);
 
 #ifdef __cplusplus

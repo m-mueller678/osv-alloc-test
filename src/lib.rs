@@ -25,7 +25,7 @@ pub mod log_allocs;
 #[cfg(not(feature = "log_allocations"))]
 pub mod log_allocs {
     pub fn log_alloc(_size: isize) {}
-    pub fn flush_alloc_log() {}
+    pub fn flush_alloc_log(_flush_id: u64) {}
 }
 #[cfg(feature = "local_api_clib")]
 mod static_lib;

@@ -60,8 +60,8 @@ pub unsafe extern "C" fn global_virtual_alloc_free(size: u64, align: u64, ptr: *
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn global_virtual_alloc_flush_log() {
-    flush_alloc_log();
+pub unsafe extern "C" fn global_virtual_alloc_flush_log(id: u64) {
+    flush_alloc_log(id);
 }
 
 #[no_mangle]
