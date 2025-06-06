@@ -11,12 +11,21 @@ pub mod no_frame_allocator;
 pub mod page_map;
 pub mod paging;
 pub mod profiling;
+#[repr(isize)]
+#[allow(clippy::enum_clike_unportable_variant)]
+pub enum LogAllocMessage {
+    Dirty = 1_000_000_000_000_000_000,
+    PreFlush,
+    PostFlush,
+    Recycle,
+    RecycleBackoff,
+}
 #[cfg(feature = "log_allocations")]
 pub mod log_allocs;
 #[cfg(not(feature = "log_allocations"))]
-mod log_allocs{
-    pub fn log_alloc(_size:isize){}
-    pub fn flush_alloc_log(){}
+pub mod log_allocs {
+    pub fn log_alloc(_size: isize) {}
+    pub fn flush_alloc_log() {}
 }
 #[cfg(feature = "local_api_clib")]
 mod static_lib;

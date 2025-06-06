@@ -1,4 +1,4 @@
-use crate::log_allocs::flush_alloc_log;
+use crate::log_allocs::{flush_alloc_log, log_alloc};
 use crate::myalloc::{GlobalData, LocalData};
 use crate::TestAlloc;
 use ahash::RandomState;
@@ -62,4 +62,9 @@ pub unsafe extern "C" fn global_virtual_alloc_free(size: u64, align: u64, ptr: *
 #[no_mangle]
 pub unsafe extern "C" fn global_virtual_alloc_flush_log() {
     flush_alloc_log();
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn global_virtual_alloc_log_alloc(x: i64) {
+    log_alloc(x as isize)
 }

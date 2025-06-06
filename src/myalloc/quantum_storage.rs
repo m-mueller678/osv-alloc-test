@@ -1,5 +1,7 @@
 use crate::buddymap::BuddyTower;
+use crate::log_allocs::log_alloc;
 use crate::myalloc::VIRTUAL_QUANTUM_BITS;
+use crate::LogAllocMessage;
 use rand::Rng;
 use std::ops::Range;
 use std::sync::Mutex;
@@ -25,9 +27,11 @@ impl QuantumStorage {
 
     fn recycle(&self) {
         if let Ok(mut tb) = self.transfer_buffer.try_lock() {
+            log_alloc(LogAllocMessage::Recycle as isize);
             self.available_quanta
                 .steal_all_and_flush(&self.released_quanta, &mut tb);
         } else {
+            log_alloc(LogAllocMessage::RecycleBackoff as isize);
             // recycling in progress, just wait for it to be done.
             drop(self.transfer_buffer.lock());
         }

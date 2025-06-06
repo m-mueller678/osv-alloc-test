@@ -18,6 +18,7 @@ void * global_virtual_alloc_alloc(uint64_t size, uint64_t align);
 void global_virtual_alloc_free(uint64_t size, uint64_t align, void *ptr);
 
 void global_virtual_alloc_flush_log();
+void global_virtual_alloc_log_alloc(int64_t size);
 
 #ifdef __cplusplus
 }
