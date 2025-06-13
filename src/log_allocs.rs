@@ -1,41 +1,65 @@
 use crate::LogAllocMessage;
-use itertools::Itertools;
-use minstant::Anchor;
+use fast_clock::std_clocks::InstantClock;
+use fast_clock::tsc::{CalibratedTsc, Tsc, TscInstant};
+use fast_clock::{Clock, ClockSynchronization};
+use std::cell::Cell;
 use std::io::{stdout, BufWriter, Write};
-use std::mem;
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, AtomicUsize};
-use thread_local::ThreadLocal;
+use std::sync::{LazyLock, Mutex};
+use std::time::Instant;
+use std::{hint, mem};
 
 const BUF_SIZE: usize = 1 << 16;
 
+#[repr(C)]
 struct LocalBuffer {
-    clean: AtomicBool,
     id: usize,
-    anchor: Anchor,
-    buf: Box<[(AtomicU64, AtomicIsize); BUF_SIZE]>,
+    anchor: ClockSynchronization<InstantClock, CalibratedTsc>,
     buf_len: AtomicUsize,
+    clean: AtomicBool,
+    buf: [(AtomicU64, AtomicIsize); BUF_SIZE],
 }
 
-static ID: AtomicUsize = AtomicUsize::new(0);
+impl LocalBuffer {
+    fn new_box() -> Box<Self> {
+        static ID: AtomicUsize = AtomicUsize::new(0);
+        let mut b = Box::<Self>::new_zeroed();
+        unsafe {
+            let ptr = b.as_mut_ptr();
+            (*ptr).id = ID.fetch_add(1, Relaxed);
+            (&raw mut (*ptr).anchor).write(ClockSynchronization::new_aba(InstantClock, TIME.0));
+            b.assume_init()
+        }
+    }
+}
 
-static LOG: ThreadLocal<LocalBuffer> = ThreadLocal::new();
+static TIME: LazyLock<(CalibratedTsc, Instant)> = LazyLock::new(|| {
+    (
+        Tsc::try_new_assume_stable().unwrap().calibrate(),
+        Instant::now(),
+    )
+});
+
+#[thread_local]
+static LOCAL: Cell<Option<&'static LocalBuffer>> = Cell::new(None);
+
+static ALL_LOCALS: Mutex<Vec<&'static LocalBuffer>> = Mutex::new(Vec::new());
+
+fn get_local() -> &'static LocalBuffer {
+    if LOCAL.get().is_none() {
+        hint::cold_path();
+        let r = Box::leak(LocalBuffer::new_box());
+        ALL_LOCALS.lock().unwrap().push(r);
+        LOCAL.set(Some(r));
+    }
+    LOCAL.get().unwrap()
+}
 
 pub fn log_alloc(size: isize) {
-    let log = LOG.get_or(|| LocalBuffer {
-        clean: AtomicBool::new(false),
-        id: ID.fetch_add(1, Relaxed),
-        anchor: Default::default(),
-        buf: std::iter::repeat_with(Default::default)
-            .take(BUF_SIZE)
-            .collect_vec()
-            .into_boxed_slice()
-            .try_into()
-            .unwrap(),
-        buf_len: Default::default(),
-    });
+    let log = get_local();
     let pos = log.buf_len.fetch_add(1, Relaxed);
-    let time: u64 = unsafe { mem::transmute(minstant::Instant::now()) };
+    let time: u64 = unsafe { mem::transmute(log.anchor.b().now()) };
     log.buf[pos].0.store(time, Relaxed);
     log.buf[pos].1.store(size, Relaxed);
 }
@@ -46,8 +70,8 @@ fn write_logs(l: &LocalBuffer, out: &mut impl Write, flush_id: u64) {
     if l.clean.swap(true, Relaxed) {
         for (time, event) in &l.buf[..len] {
             let time: u64 = time.load(Relaxed);
-            let time: minstant::Instant = unsafe { mem::transmute(time) };
-            let time = time.as_unix_nanos(&l.anchor);
+            let time: TscInstant = unsafe { mem::transmute(time) };
+            let time = l.anchor.to_a(time).duration_since(TIME.1).as_nanos();
             let event = event.load(Relaxed);
             write!(out, ";{time},{event}",).unwrap();
         }
@@ -62,7 +86,7 @@ fn write_logs(l: &LocalBuffer, out: &mut impl Write, flush_id: u64) {
 pub fn flush_alloc_log(flush_id: u64) {
     log_alloc(LogAllocMessage::PreFlush as isize);
     let mut out = BufWriter::new(stdout().lock());
-    for log in LOG.iter() {
+    for log in ALL_LOCALS.lock().unwrap().iter() {
         write_logs(log, &mut out, flush_id)
     }
     out.flush().unwrap();

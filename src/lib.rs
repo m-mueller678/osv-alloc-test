@@ -1,5 +1,10 @@
 #![allow(clippy::result_unit_err)]
 #![allow(clippy::missing_safety_doc)]
+#![feature(thread_local)]
+#![feature(generic_atomic)]
+#![feature(sync_unsafe_cell)]
+#![feature(new_zeroed_alloc)]
+#![feature(cold_path)]
 
 use std::alloc::Layout;
 
