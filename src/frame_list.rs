@@ -9,7 +9,10 @@ use x86_64::VirtAddr;
 
 unsafe impl<S: PageSize, Sys: SystemInterface, const C: usize> Send for FrameList<S, Sys, C> {}
 
-pub struct FrameList<S: PageSize, Sys: SystemInterface, const C: usize>(*mut ListFrame<S, Sys, C>);
+pub struct FrameList<S: PageSize, Sys: SystemInterface, const C: usize> {
+    head: *mut ListFrame<S, Sys, C>,
+    sys: Sys,
+}
 
 #[allow(type_alias_bounds)]
 pub type FrameList2M<Sys: SystemInterface> = FrameList<Size2MiB, Sys, { 512 * 512 - 2 }>;
@@ -21,18 +24,18 @@ struct ListFrame<S: PageSize, Sys: SystemInterface, const C: usize> {
     sys: PhantomData<Sys>,
 }
 
-impl<S: PageSize, Sys: SystemInterface, const C: usize> Default for FrameList<S, Sys, C> {
-    fn default() -> Self {
-        assert_eq!(size_of::<ListFrame<S, Sys, C>>(), S::SIZE as usize);
-        FrameList(ptr::null_mut())
-    }
-}
-
 impl<S: PageSize, Sys: SystemInterface, const C: usize> FrameList<S, Sys, C> {
+    pub fn new(sys: Sys) -> Self {
+        assert_eq!(size_of::<ListFrame<S, Sys, C>>(), S::SIZE as usize);
+        FrameList {
+            head: ptr::null_mut(),
+            sys,
+        }
+    }
     pub fn push(&mut self, f: PhysFrame<S>) {
         unsafe {
-            if !self.0.is_null() {
-                let ff = &mut *self.0;
+            if !self.head.is_null() {
+                let ff = &mut *self.head;
                 if ff.count < ff.frames.len() {
                     ff.frames[ff.count].write(f);
                     ff.count += 1;
@@ -44,21 +47,21 @@ impl<S: PageSize, Sys: SystemInterface, const C: usize> FrameList<S, Sys, C> {
     }
 
     pub fn pop(&mut self) -> Option<PhysFrame<S>> {
-        if self.0.is_null() {
+        if self.head.is_null() {
             return None;
         }
         unsafe {
             let next = {
-                let ff = &mut *self.0;
+                let ff = &mut *self.head;
                 if ff.count > 0 {
                     ff.count -= 1;
                     return Some(Self::check_frame(ff.frames[ff.count].assume_init_read()));
                 }
                 ff.next
             };
-            let frame = replace(&mut self.0, next);
+            let frame = replace(&mut self.head, next);
             Some(Self::check_frame(
-                PhysFrame::from_start_address(Sys::paddr(VirtAddr::from_ptr(frame))).unwrap(),
+                PhysFrame::from_start_address(self.sys.paddr(VirtAddr::from_ptr(frame))).unwrap(),
             ))
         }
     }
@@ -91,13 +94,16 @@ impl<S: PageSize, Sys: SystemInterface, const C: usize> FrameList<S, Sys, C> {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.0.is_null()
+        self.head.is_null()
     }
 
     unsafe fn push_first(&mut self, f: PhysFrame<S>) {
-        let old = self.0;
-        self.0 = Sys::vaddr(f.start_address()).as_mut_ptr::<ListFrame<S, Sys, C>>();
-        *addr_of_mut!((*self.0).count) = 0;
-        *addr_of_mut!((*self.0).next) = old;
+        let old = self.head;
+        self.head = self
+            .sys
+            .vaddr(f.start_address())
+            .as_mut_ptr::<ListFrame<S, Sys, C>>();
+        *addr_of_mut!((*self.head).count) = 0;
+        *addr_of_mut!((*self.head).next) = old;
     }
 }

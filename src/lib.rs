@@ -13,6 +13,8 @@ mod frame_list;
 mod myalloc;
 mod page_map;
 mod system_interface;
+#[cfg(feature = "test")]
+mod test;
 
 use std::alloc::Layout;
 

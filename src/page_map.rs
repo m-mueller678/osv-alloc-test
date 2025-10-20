@@ -1,14 +1,17 @@
 use ahash::RandomState;
 use radium::marker::{Atomic, BitOps, NumericOps};
 use radium::{Atom, Radium};
+use std::alloc::Allocator;
+#[cfg(feature = "hash_map_debug")]
+use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::ops::{Shl, Shr};
 use std::sync::atomic::Ordering::Relaxed;
+#[cfg(feature = "hash_map_debug")]
+use std::sync::Mutex;
 use x86_64::structures::paging::{Page, PhysFrame, Size2MiB};
 use x86_64::PhysAddr;
-
-use crate::SystemInterface;
 
 pub trait BetterAtom:
     Atomic
@@ -41,27 +44,22 @@ fn check_width(val: impl BetterAtom, bits: u32) {
     debug_assert!(val | mask(bits) == mask(bits));
 }
 
-pub struct SmallCountHashMap<
-    T: BetterAtom,
-    S: SystemInterface,
-    const C: u32,
-    const V: u32,
-    const K: u32,
-> {
+pub struct SmallCountHashMap<T: BetterAtom, A: Allocator, const C: u32, const V: u32, const K: u32>
+{
     slot_index_mask: usize,
-    slots: Vec<Atom<T>, S::Alloc>,
+    slots: Vec<Atom<T>, A>,
     random_state: RandomState,
     #[cfg(feature = "hash_map_debug")]
-    lock: std::sync::Mutex<std::collections::BTreeMap<T, (T, T), S::Alloc>>,
+    lock: std::sync::Mutex<std::collections::BTreeMap<T, (T, T), A>>,
 }
 
-impl<T: BetterAtom, S: SystemInterface, const C: u32, const V: u32, const K: u32>
-    SmallCountHashMap<T, S, C, V, K>
+impl<T: BetterAtom, A: Allocator + Clone, const C: u32, const V: u32, const K: u32>
+    SmallCountHashMap<T, A, C, V, K>
 {
-    pub fn with_num_slots(mut s: usize) -> Self {
+    pub fn with_num_slots_in(mut s: usize, allocator: A) -> Self {
         assert!((C + V + K) as usize <= std::mem::size_of::<T>() * 8);
         s = s.next_power_of_two();
-        let mut slots = Vec::with_capacity_in(s, S::Alloc::default());
+        let mut slots = Vec::with_capacity_in(s, allocator.clone());
         for _ in 0..s {
             slots.push(Atom::new(T::from(0)));
         }
@@ -70,7 +68,7 @@ impl<T: BetterAtom, S: SystemInterface, const C: u32, const V: u32, const K: u32
             slots,
             random_state: RandomState::with_seed(0xee61096f95490820),
             #[cfg(feature = "hash_map_debug")]
-            lock: Default::default(),
+            lock: Mutex::new(BTreeMap::new_in(allocator)),
         }
     }
 
@@ -161,16 +159,16 @@ impl<T: BetterAtom, S: SystemInterface, const C: u32, const V: u32, const K: u32
     }
 }
 
-pub struct PageMap<S: SystemInterface> {
+pub struct PageMap<A: Allocator> {
     pub base_page: Page<Size2MiB>,
-    inner: SmallCountHashMap<u64, S, 16, 21, 27>,
+    inner: SmallCountHashMap<u64, A, 16, 21, 27>,
 }
 
-impl<S: SystemInterface> PageMap<S> {
-    pub fn new(num_slots: usize, base_page: Page<Size2MiB>) -> Self {
+impl<A: Allocator + Clone> PageMap<A> {
+    pub fn new_in(num_slots: usize, base_page: Page<Size2MiB>, allocator: A) -> Self {
         PageMap {
             base_page,
-            inner: SmallCountHashMap::with_num_slots(num_slots),
+            inner: SmallCountHashMap::with_num_slots_in(num_slots, allocator),
         }
     }
 

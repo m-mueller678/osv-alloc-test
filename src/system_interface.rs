@@ -1,6 +1,5 @@
 use std::{
     alloc::{Allocator, Layout},
-    marker::PhantomData,
     mem::MaybeUninit,
 };
 
@@ -14,38 +13,46 @@ use x86_64::{
     PhysAddr, VirtAddr,
 };
 
-pub unsafe trait SystemInterface: Sized {
-    fn allocate_virtual(layout: Layout) -> VirtAddr;
-    fn allocate_physical(layout: Layout) -> PhysAddr;
-    fn global_tlb_flush();
-    fn vaddr(addr: PhysAddr) -> VirtAddr;
-    fn paddr(addr: VirtAddr) -> PhysAddr;
-    unsafe fn prepare_page_table(range: PageRangeInclusive<Size2MiB>) {
-        direct_access_prepare_page_table::<Self>(range);
+pub unsafe trait SystemInterface: Sized + Copy {
+    fn allocate_virtual(self, layout: Layout) -> VirtAddr;
+    fn allocate_physical(self, layout: Layout) -> PhysAddr;
+    fn global_tlb_flush(self);
+    fn vaddr(self, addr: PhysAddr) -> VirtAddr;
+    fn paddr(self, addr: VirtAddr) -> PhysAddr;
+    unsafe fn prepare_page_table(self, range: PageRangeInclusive<Size2MiB>) {
+        direct_access_prepare_page_table(self, range);
     }
 
-    unsafe fn map(page: Page<Size2MiB>, frame: PhysFrame<Size2MiB>) {
-        direct_access_map::<Self>(page, frame);
+    unsafe fn map(self, page: Page<Size2MiB>, frame: PhysFrame<Size2MiB>) {
+        direct_access_map(self, page, frame);
     }
 
-    unsafe fn unmap(page: Page<Size2MiB>) -> PhysFrame<Size2MiB> {
-        direct_access_unmap::<Self>(page)
+    unsafe fn unmap(self, page: Page<Size2MiB>) -> PhysFrame<Size2MiB> {
+        direct_access_unmap(self, page)
     }
-    fn trace_recycle_backoff() {}
-    fn trace_recycle() {}
-    type Alloc: Allocator + Default;
+    fn trace_recycle_backoff(self) {}
+    fn trace_recycle(self) {}
+    fn allocator(self) -> Self::Alloc;
+    type Alloc: Allocator + Clone;
 }
 
-pub unsafe fn direct_access_map<S: SystemInterface>(
+pub unsafe fn direct_access_map(
+    sys: impl SystemInterface,
     page: Page<Size2MiB>,
     frame: PhysFrame<Size2MiB>,
 ) {
     let (l4_frame, _) = Cr3::read();
-    let l4 = S::vaddr(l4_frame.start_address()).as_mut_ptr::<PageTableEntry>();
+    let l4 = sys
+        .vaddr(l4_frame.start_address())
+        .as_mut_ptr::<PageTableEntry>();
     let l3_frame = l4.add(page.p4_index().into()).read().frame().unwrap();
-    let l3 = S::vaddr(l3_frame.start_address()).as_mut_ptr::<PageTableEntry>();
+    let l3 = sys
+        .vaddr(l3_frame.start_address())
+        .as_mut_ptr::<PageTableEntry>();
     let l2_frame = l3.add(page.p3_index().into()).read().frame().unwrap();
-    let l2 = S::vaddr(l2_frame.start_address()).as_mut_ptr::<PageTableEntry>();
+    let l2 = sys
+        .vaddr(l2_frame.start_address())
+        .as_mut_ptr::<PageTableEntry>();
     let l2_entry = &mut *l2.add(page.p2_index().into());
     debug_assert!(l2_entry.is_unused());
     l2_entry.set_addr(
@@ -53,21 +60,30 @@ pub unsafe fn direct_access_map<S: SystemInterface>(
         PageTableFlags::PRESENT | PageTableFlags::HUGE_PAGE | PageTableFlags::WRITABLE,
     );
 }
-pub unsafe fn direct_access_unmap<S: SystemInterface>(page: Page<Size2MiB>) -> PhysFrame<Size2MiB> {
+pub unsafe fn direct_access_unmap(
+    sys: impl SystemInterface,
+    page: Page<Size2MiB>,
+) -> PhysFrame<Size2MiB> {
     let (l4_frame, _) = Cr3::read();
-    let l4 = S::vaddr(l4_frame.start_address()).as_mut_ptr::<PageTableEntry>();
+    let l4 = sys
+        .vaddr(l4_frame.start_address())
+        .as_mut_ptr::<PageTableEntry>();
     let l3_frame = l4
         .add(page.p4_index().into())
         .read()
         .frame()
         .unwrap_unchecked();
-    let l3 = S::vaddr(l3_frame.start_address()).as_mut_ptr::<PageTableEntry>();
+    let l3 = sys
+        .vaddr(l3_frame.start_address())
+        .as_mut_ptr::<PageTableEntry>();
     let l2_frame = l3
         .add(page.p3_index().into())
         .read()
         .frame()
         .unwrap_unchecked();
-    let l2 = S::vaddr(l2_frame.start_address()).as_mut_ptr::<PageTableEntry>();
+    let l2 = sys
+        .vaddr(l2_frame.start_address())
+        .as_mut_ptr::<PageTableEntry>();
     let l2_entry = l2
         .add(page.p2_index().into())
         .replace(PageTableEntry::new());
@@ -77,14 +93,17 @@ pub unsafe fn direct_access_unmap<S: SystemInterface>(page: Page<Size2MiB>) -> P
     PhysFrame::from_start_address(l2_entry.addr()).unwrap()
 }
 
-pub fn direct_access_prepare_page_table<S: SystemInterface>(range: PageRangeInclusive<Size2MiB>) {
-    struct SystemFrameAllocator<S: SystemInterface>(PhantomData<S>);
+pub fn direct_access_prepare_page_table(
+    sys: impl SystemInterface,
+    range: PageRangeInclusive<Size2MiB>,
+) {
+    struct SystemFrameAllocator<S: SystemInterface>(S);
 
     unsafe impl<S: SystemInterface> FrameAllocator<Size4KiB> for SystemFrameAllocator<S> {
         fn allocate_frame(&mut self) -> Option<PhysFrame<Size4KiB>> {
             let layout =
                 Layout::from_size_align(Size4KiB::SIZE as usize, Size4KiB::SIZE as usize).unwrap();
-            Some(PhysFrame::from_start_address(S::allocate_physical(layout)).unwrap())
+            Some(PhysFrame::from_start_address(self.0.allocate_physical(layout)).unwrap())
         }
     }
     struct EnsurePresent {
@@ -93,17 +112,17 @@ pub fn direct_access_prepare_page_table<S: SystemInterface>(range: PageRangeIncl
     }
 
     /// pe must not be concurrently written to.
-    unsafe fn ensure_present<S: SystemInterface>(pe: *mut PageTableEntry) -> EnsurePresent {
+    unsafe fn ensure_present(sys: impl SystemInterface, pe: *mut PageTableEntry) -> EnsurePresent {
         let is_new = false;
         {
             let pe = &mut *pe;
             if pe.is_unused() {
                 assert!(pe.is_unused(), "unexpected page flags: {:?}", pe.flags());
-                let new_frame = SystemFrameAllocator::<S>(PhantomData)
+                let new_frame = SystemFrameAllocator(sys)
                     .allocate_frame()
                     .unwrap()
                     .start_address();
-                S::vaddr(new_frame)
+                sys.vaddr(new_frame)
                     .as_mut_ptr::<MaybeUninit<PageTable>>()
                     .write(MaybeUninit::zeroed());
                 pe.set_addr(
@@ -122,11 +141,14 @@ pub fn direct_access_prepare_page_table<S: SystemInterface>(range: PageRangeIncl
 
     let mut leaked_frames = 0;
     let (l4_frame, _) = Cr3::read();
-    let l4 = S::vaddr(l4_frame.start_address()).as_mut_ptr::<PageTableEntry>();
+    let l4 = sys
+        .vaddr(l4_frame.start_address())
+        .as_mut_ptr::<PageTableEntry>();
     for i4 in usize::from(range.start.p4_index())..=usize::from(range.end.p4_index()) {
-        let l4_entry = unsafe { ensure_present::<S>(l4.add(i4)).pte };
+        let l4_entry = unsafe { ensure_present(sys, l4.add(i4)).pte };
         assert!(l4_entry.flags().contains(PageTableFlags::PRESENT));
-        let l3 = S::vaddr(unsafe { l4_entry.frame().unwrap_unchecked() }.start_address())
+        let l3 = sys
+            .vaddr(unsafe { l4_entry.frame().unwrap_unchecked() }.start_address())
             .as_mut_ptr::<PageTableEntry>();
         let i3_start = if i4 == usize::from(range.start.p4_index()) {
             usize::from(range.start.p3_index())
@@ -142,10 +164,12 @@ pub fn direct_access_prepare_page_table<S: SystemInterface>(range: PageRangeIncl
             let EnsurePresent {
                 pte: l3_entry,
                 is_new,
-            } = unsafe { ensure_present::<S>(l3.add(i3)) };
+            } = unsafe { ensure_present(sys, l3.add(i3)) };
             if !is_new {
                 let l2_frame = l3_entry.frame().unwrap();
-                let l2 = S::vaddr(l2_frame.start_address()).as_mut_ptr::<PageTableEntry>();
+                let l2 = sys
+                    .vaddr(l2_frame.start_address())
+                    .as_mut_ptr::<PageTableEntry>();
                 let i2_start = if i3 == i3_start {
                     usize::from(range.start.p2_index())
                 } else {
@@ -169,7 +193,7 @@ pub fn direct_access_prepare_page_table<S: SystemInterface>(range: PageRangeIncl
             }
         }
     }
-    S::global_tlb_flush();
+    sys.global_tlb_flush();
     if leaked_frames > 0 {
         warn!("leaked {leaked_frames} frames");
     }

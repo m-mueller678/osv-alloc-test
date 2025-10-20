@@ -14,15 +14,15 @@ use tracing::{info, warn};
 const QUANTUM_ID_BITS: u32 = 27;
 const TRANSFER_BUFFER_LEVEL_BITS: u32 = 32 - QUANTUM_ID_BITS;
 
-pub struct BuddyMap<A: Allocator + Default> {
+pub struct BuddyMap<A: Allocator> {
     pairs: Vec<AtomicU64, A>,
     index_distribution: Uniform<usize>,
 }
 
-impl<A: Allocator + Default> BuddyMap<A> {
-    pub fn new(slot_count: usize) -> Self {
+impl<A: Allocator> BuddyMap<A> {
+    pub fn new_in(slot_count: usize, allocator: A) -> Self {
         let len = (slot_count).div_ceil(64);
-        let mut pairs = Vec::with_capacity_in(len, A::default());
+        let mut pairs = Vec::with_capacity_in(len, allocator);
         for _ in 0..len {
             pairs.push(AtomicU64::new(0));
         }
@@ -81,15 +81,19 @@ impl<A: Allocator + Default> BuddyMap<A> {
 pub struct BuddyTower<S: SystemInterface, const H: usize> {
     base_quantum: u32,
     maps: [BuddyMap<S::Alloc>; H],
+    sys: S,
 }
 
 impl<S: SystemInterface, const H: usize> BuddyTower<S, H> {
-    pub fn new(quantum_count: usize, base_quantum: u32) -> Self {
+    pub fn new(sys: S, quantum_count: usize, base_quantum: u32) -> Self {
         assert!(H < (1usize << TRANSFER_BUFFER_LEVEL_BITS));
         info!("quantum_count={quantum_count}");
         BuddyTower {
             base_quantum,
-            maps: array_init::array_init(|i| BuddyMap::new(quantum_count.div_ceil(1 << i))),
+            maps: array_init::array_init(|i| {
+                BuddyMap::new_in(quantum_count.div_ceil(1 << i), sys.allocator())
+            }),
+            sys,
         }
     }
 
@@ -125,9 +129,9 @@ impl<S: SystemInterface, const H: usize> BuddyTower<S, H> {
         None
     }
 
-    pub fn from_range(range: Range<u32>) -> Self {
+    pub fn from_range(sys: S, range: Range<u32>) -> Self {
         assert!((range.end - 1) < (1u32 << QUANTUM_ID_BITS));
-        let ret = Self::new(range.len(), range.start);
+        let ret = Self::new(sys, range.len(), range.start);
         for x in range {
             ret.insert(0, x);
         }
@@ -176,7 +180,7 @@ impl<S: SystemInterface, const H: usize> BuddyTower<S, H> {
     }
 
     fn insert_transfer_vector(&self, transfer_buffer: &mut Vec<u32, S::Alloc>) {
-        S::global_tlb_flush();
+        self.sys.global_tlb_flush();
         for x in &mut *transfer_buffer {
             self.insert(*x >> QUANTUM_ID_BITS, *x & mask::<u32>(QUANTUM_ID_BITS))
         }
