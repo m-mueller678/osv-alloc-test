@@ -6,11 +6,10 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-default=["test"]
+default=[]
 hash_map_debug =[]
 local_api_clib=["dep:tracing-subscriber"]
 global_api_clib=["dep:tracing-subscriber"]
-test=[]
 
 [dependencies]
 libc = "0.2.153"
