@@ -25,10 +25,15 @@ fn address_to_quantum(a: VirtAddr) -> u32 {
 mod quantum_storage;
 
 pub struct GlobalData<S: SystemInterface> {
-    allocs_per_page: PageMap,
-    pages_per_quantum:
-        SmallCountHashMap<u32, { VIRTUAL_QUANTUM_BITS + 1 - 21 }, 0, { 48 - VIRTUAL_QUANTUM_BITS }>,
-    available_frames: Mutex<Vec<PhysFrame<Size2MiB>>>,
+    allocs_per_page: PageMap<S>,
+    pages_per_quantum: SmallCountHashMap<
+        u32,
+        S,
+        { VIRTUAL_QUANTUM_BITS + 1 - 21 },
+        0,
+        { 48 - VIRTUAL_QUANTUM_BITS },
+    >,
+    available_frames: Mutex<Vec<PhysFrame<Size2MiB>, S::Alloc>>,
     quantum_storage: QuantumStorage<S>,
 }
 
@@ -65,15 +70,16 @@ impl<S: SystemInterface> GlobalData<S> {
 
         assert!(virt_size <= 1 << 46);
 
-        let frames: Vec<PhysFrame<Size2MiB>> = (0..frame_count)
-            .map(|_| {
+        let mut frames = Vec::with_capacity_in(frame_count, S::Alloc::default());
+        for _ in 0..frame_count {
+            frames.push(
                 PhysFrame::<Size2MiB>::from_start_address(S::allocate_physical(
                     Layout::from_size_align(Size2MiB::SIZE as usize, Size2MiB::SIZE as usize)
                         .unwrap(),
                 ))
-                .unwrap()
-            })
-            .collect();
+                .unwrap(),
+            )
+        }
 
         GlobalData {
             allocs_per_page: PageMap::new(frame_count + frame_count / 4, virt_start),

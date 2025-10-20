@@ -1,4 +1,8 @@
-use std::{alloc::Layout, marker::PhantomData, mem::MaybeUninit};
+use std::{
+    alloc::{Allocator, Layout},
+    marker::PhantomData,
+    mem::MaybeUninit,
+};
 
 use tracing::warn;
 use x86_64::{
@@ -29,6 +33,7 @@ pub unsafe trait SystemInterface: Sized {
     }
     fn trace_recycle_backoff() {}
     fn trace_recycle() {}
+    type Alloc: Allocator + Default;
 }
 
 pub unsafe fn direct_access_map<S: SystemInterface>(

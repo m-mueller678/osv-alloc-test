@@ -5,6 +5,7 @@ use itertools::Itertools;
 use rand::distributions::Distribution;
 use rand::distributions::Uniform;
 use rand::Rng;
+use std::alloc::Allocator;
 use std::ops::Range;
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -13,16 +14,20 @@ use tracing::{info, warn};
 const QUANTUM_ID_BITS: u32 = 27;
 const TRANSFER_BUFFER_LEVEL_BITS: u32 = 32 - QUANTUM_ID_BITS;
 
-pub struct BuddyMap {
-    pairs: Vec<AtomicU64>,
+pub struct BuddyMap<A: Allocator + Default> {
+    pairs: Vec<AtomicU64, A>,
     index_distribution: Uniform<usize>,
 }
 
-impl BuddyMap {
+impl<A: Allocator + Default> BuddyMap<A> {
     pub fn new(slot_count: usize) -> Self {
         let len = (slot_count).div_ceil(64);
+        let mut pairs = Vec::with_capacity_in(len, A::default());
+        for _ in 0..len {
+            pairs.push(AtomicU64::new(0));
+        }
         BuddyMap {
-            pairs: (0..len).map(|_| AtomicU64::new(0)).collect(),
+            pairs,
             index_distribution: Uniform::new(0, len),
         }
     }
@@ -73,12 +78,12 @@ impl BuddyMap {
     }
 }
 
-pub struct BuddyTower<const H: usize> {
+pub struct BuddyTower<S: SystemInterface, const H: usize> {
     base_quantum: u32,
-    maps: [BuddyMap; H],
+    maps: [BuddyMap<S::Alloc>; H],
 }
 
-impl<const H: usize> BuddyTower<H> {
+impl<S: SystemInterface, const H: usize> BuddyTower<S, H> {
     pub fn new(quantum_count: usize, base_quantum: u32) -> Self {
         assert!(H < (1usize << TRANSFER_BUFFER_LEVEL_BITS));
         info!("quantum_count={quantum_count}");
@@ -147,11 +152,7 @@ impl<const H: usize> BuddyTower<H> {
         );
     }
 
-    pub fn steal_all_and_flush<S: SystemInterface>(
-        &self,
-        other: &Self,
-        transfer_buffer: &mut Vec<u32>,
-    ) {
+    pub fn steal_all_and_flush(&self, other: &Self, transfer_buffer: &mut Vec<u32, S::Alloc>) {
         debug_assert!(transfer_buffer.is_empty());
         for l in 0..H {
             for (i, x) in other.maps[l].pairs.iter().enumerate() {
@@ -160,7 +161,7 @@ impl<const H: usize> BuddyTower<H> {
                     if transfer_buffer.len() == transfer_buffer.capacity() {
                         // this should never happen with properly sized transfer vector
                         warn!("ran out of transfer buffer space");
-                        self.insert_transfer_vector::<S>(transfer_buffer);
+                        self.insert_transfer_vector(transfer_buffer);
                     }
                     let bit = taken.trailing_zeros();
                     taken ^= 1 << bit;
@@ -171,10 +172,10 @@ impl<const H: usize> BuddyTower<H> {
                 }
             }
         }
-        self.insert_transfer_vector::<S>(transfer_buffer);
+        self.insert_transfer_vector(transfer_buffer);
     }
 
-    fn insert_transfer_vector<S: SystemInterface>(&self, transfer_buffer: &mut Vec<u32>) {
+    fn insert_transfer_vector(&self, transfer_buffer: &mut Vec<u32, S::Alloc>) {
         S::global_tlb_flush();
         for x in &mut *transfer_buffer {
             self.insert(*x >> QUANTUM_ID_BITS, *x & mask::<u32>(QUANTUM_ID_BITS))

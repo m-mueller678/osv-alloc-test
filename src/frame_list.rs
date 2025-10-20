@@ -70,13 +70,17 @@ impl<S: PageSize, Sys: SystemInterface, const C: usize> FrameList<S, Sys, C> {
         a
     }
 
-    pub fn merge_into_vec(&mut self, dst: &mut Vec<PhysFrame<S>>) {
+    pub fn merge_into_vec(&mut self, dst: &mut Vec<PhysFrame<S>, Sys::Alloc>) {
         while let Some(x) = self.pop() {
             dst.push(x);
         }
     }
 
-    pub fn steal_from_vec(&mut self, src: &mut Vec<PhysFrame<S>>, count: usize) -> Result<(), ()> {
+    pub fn steal_from_vec(
+        &mut self,
+        src: &mut Vec<PhysFrame<S>, Sys::Alloc>,
+        count: usize,
+    ) -> Result<(), ()> {
         if src.len() < count {
             return Err(());
         }

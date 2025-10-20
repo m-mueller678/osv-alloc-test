@@ -8,6 +8,8 @@ use std::sync::atomic::Ordering::Relaxed;
 use x86_64::structures::paging::{Page, PhysFrame, Size2MiB};
 use x86_64::PhysAddr;
 
+use crate::SystemInterface;
+
 pub trait BetterAtom:
     Atomic
     + NumericOps
@@ -39,21 +41,33 @@ fn check_width(val: impl BetterAtom, bits: u32) {
     debug_assert!(val | mask(bits) == mask(bits));
 }
 
-pub struct SmallCountHashMap<T: BetterAtom, const C: u32, const V: u32, const K: u32> {
+pub struct SmallCountHashMap<
+    T: BetterAtom,
+    S: SystemInterface,
+    const C: u32,
+    const V: u32,
+    const K: u32,
+> {
     slot_index_mask: usize,
-    slots: Vec<Atom<T>>,
+    slots: Vec<Atom<T>, S::Alloc>,
     random_state: RandomState,
     #[cfg(feature = "hash_map_debug")]
-    lock: std::sync::Mutex<std::collections::BTreeMap<T, (T, T)>>,
+    lock: std::sync::Mutex<std::collections::BTreeMap<T, (T, T), S::Alloc>>,
 }
 
-impl<T: BetterAtom, const C: u32, const V: u32, const K: u32> SmallCountHashMap<T, C, V, K> {
+impl<T: BetterAtom, S: SystemInterface, const C: u32, const V: u32, const K: u32>
+    SmallCountHashMap<T, S, C, V, K>
+{
     pub fn with_num_slots(mut s: usize) -> Self {
         assert!((C + V + K) as usize <= std::mem::size_of::<T>() * 8);
         s = s.next_power_of_two();
+        let mut slots = Vec::with_capacity_in(s, S::Alloc::default());
+        for _ in 0..s {
+            slots.push(Atom::new(T::from(0)));
+        }
         SmallCountHashMap {
             slot_index_mask: s - 1,
-            slots: (0..s).map(|_| Atom::new(T::from(0))).collect(),
+            slots,
             random_state: RandomState::with_seed(0xee61096f95490820),
             #[cfg(feature = "hash_map_debug")]
             lock: Default::default(),
@@ -147,12 +161,12 @@ impl<T: BetterAtom, const C: u32, const V: u32, const K: u32> SmallCountHashMap<
     }
 }
 
-pub struct PageMap {
+pub struct PageMap<S: SystemInterface> {
     pub base_page: Page<Size2MiB>,
-    inner: SmallCountHashMap<u64, 16, 21, 27>,
+    inner: SmallCountHashMap<u64, S, 16, 21, 27>,
 }
 
-impl PageMap {
+impl<S: SystemInterface> PageMap<S> {
     pub fn new(num_slots: usize, base_page: Page<Size2MiB>) -> Self {
         PageMap {
             base_page,
