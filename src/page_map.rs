@@ -1,4 +1,3 @@
-use crate::util::mask;
 use ahash::RandomState;
 use next_gen::generator;
 use radium::marker::{Atomic, BitOps, NumericOps};
@@ -505,4 +504,7 @@ impl PageMap {
     pub fn increment_at(&self, index: usize, page: Page<Size2MiB>) {
         self.inner.increment_at(index, page - self.base_page, 1)
     }
+}
+pub fn mask<T: BetterAtom>(bits: u32) -> T {
+    (T::from(1) << bits) - T::from(1)
 }

@@ -1,30 +1,23 @@
-use crate::frame_allocator::MmapFrameAllocator;
 use crate::frame_list::FrameList2M;
+use crate::log_allocs::log_alloc;
 use crate::myalloc::quantum_storage::QuantumStorage;
 use crate::page_map::{PageMap, SmallCountHashMap};
-use crate::paging::{allocate_l2_tables, map_huge_page, unmap_huge_page};
-use crate::profile_function;
-use crate::util::{alloc_mmap, page_table, MB, PHYS_OFFSET};
-use crate::TestAlloc;
+use crate::{profile_function, SystemInterface, TestAlloc};
 use ahash::RandomState;
 use rand::rngs::SmallRng;
 use rand::SeedableRng;
 use std::alloc::Layout;
-
 use std::ops::Deref;
 use std::ptr;
 use std::sync::Mutex;
-use tracing::{error, info};
-use x86_64::registers::control::Cr3;
-
-use crate::log_allocs::log_alloc;
-use x86_64::structures::paging::page::PageRangeInclusive;
-use x86_64::structures::paging::page_table::PageTableEntry;
-use x86_64::structures::paging::{Mapper, Page, PageSize, PhysFrame, Size2MiB};
+use tracing::error;
+use x86_64::structures::paging::frame::PhysFrameRange;
+use x86_64::structures::paging::page::PageRange;
+use x86_64::structures::paging::{Page, PageSize, PhysFrame, Size2MiB};
 use x86_64::VirtAddr;
 
 const VIRTUAL_QUANTUM_BITS: u32 = 24;
-const MAX_MID_SIZE: usize = 16 * MB;
+const MAX_MID_SIZE: usize = 16 << 20;
 const ADDRESS_BIT_MASK: u64 = (!0u64) >> 16;
 
 fn address_to_quantum(a: VirtAddr) -> u32 {
@@ -33,15 +26,15 @@ fn address_to_quantum(a: VirtAddr) -> u32 {
 
 mod quantum_storage;
 
-pub struct GlobalData {
+pub struct GlobalData<S: SystemInterface> {
     allocs_per_page: PageMap,
     pages_per_quantum:
         SmallCountHashMap<u32, { VIRTUAL_QUANTUM_BITS + 1 - 21 }, 0, { 48 - VIRTUAL_QUANTUM_BITS }>,
     available_frames: Mutex<Vec<PhysFrame<Size2MiB>>>,
-    quantum_storage: QuantumStorage,
+    quantum_storage: QuantumStorage<S>,
 }
 
-impl GlobalData {
+impl<S: SystemInterface> GlobalData<S> {
     #[must_use]
     fn map_and_insert(
         &self,
@@ -50,7 +43,7 @@ impl GlobalData {
         count: usize,
     ) -> usize {
         unsafe {
-            map_huge_page(page, frame);
+            S::map(page, frame);
         }
         self.allocs_per_page.insert(page, frame, count)
     }
@@ -61,96 +54,36 @@ impl GlobalData {
         }
     }
 
-    /// returned range is quantum aligned
-    #[allow(clippy::ptr_arg)]
-    fn claim_virtual_space(
-        size: usize,
-        _frames: &mut Vec<PhysFrame<Size2MiB>>,
-    ) -> PageRangeInclusive<Size2MiB> {
-        let virt_pages_exclusive = alloc_mmap((size + (1 << VIRTUAL_QUANTUM_BITS)) >> 21, false);
-        let virt_pages_inclusive =
-            Page::range_inclusive(virt_pages_exclusive.start, virt_pages_exclusive.end - 1);
-
-        info!("allocating l2 tables");
-        {
-            let mut frame_allocator = MmapFrameAllocator::default();
-            allocate_l2_tables(virt_pages_inclusive, &mut frame_allocator);
-        }
-
-        let start = virt_pages_inclusive
+    pub fn new(physical: PhysFrameRange<Size2MiB>, virt: PageRange<Size2MiB>) -> Self {
+        assert!(virt
             .start
             .start_address()
-            .as_u64()
-            .next_multiple_of(1 << VIRTUAL_QUANTUM_BITS);
-        assert!(start + (size as u64) < 1 << 47);
-        Page::range_inclusive(
-            Page::from_start_address(VirtAddr::new(start)).unwrap(),
-            Page::from_start_address(VirtAddr::new(start + size as u64)).unwrap() - 1,
-        )
-    }
+            .is_aligned(1u64 << VIRTUAL_QUANTUM_BITS));
+        assert!(virt
+            .end
+            .start_address()
+            .is_aligned(1u64 << VIRTUAL_QUANTUM_BITS));
+        assert!(virt.end - virt.start <= 1 << 46);
 
-    pub fn new(physical_size: usize, virt_size: usize) -> Self {
-        assert_eq!(physical_size % Size2MiB::SIZE as usize, 0);
-        assert_eq!(virt_size % (1 << VIRTUAL_QUANTUM_BITS), 0);
-        assert!(virt_size <= 1 << 46);
-
-        let phys_pages = alloc_mmap::<Size2MiB>(physical_size / Size2MiB::SIZE as usize, false);
-        info!("phys pages: {:?}", &phys_pages);
-        for p in phys_pages {
-            unsafe {
-                p.start_address().as_mut_ptr::<u8>().write(0);
-            }
-        }
-        let mut available_frames: Vec<_> = phys_pages
-            .into_iter()
-            .filter_map(|p| {
-                let x = (unsafe { page_table() }).translate_page(p);
-                x.map_err(|e| {
-                    error!("failed to claim frame for {p:?}: {e:?}");
-                    unsafe {
-                        dbg!(p.p4_index(), p.p3_index(), p.p2_index());
-                        let (l4_frame, _) = Cr3::read();
-                        let l4 = VirtAddr::new(l4_frame.start_address().as_u64() + PHYS_OFFSET)
-                            .as_mut_ptr::<PageTableEntry>();
-                        let l4e = l4.add(p.p4_index().into()).read();
-                        let l3_frame = l4e.frame().unwrap_unchecked();
-                        let l3 = VirtAddr::new(l3_frame.start_address().as_u64() + PHYS_OFFSET)
-                            .as_mut_ptr::<PageTableEntry>();
-                        let l3e = l3.add(p.p3_index().into()).read();
-                        let l2_frame = l3e.frame().unwrap_unchecked();
-                        let l2 = VirtAddr::new(l2_frame.start_address().as_u64() + PHYS_OFFSET)
-                            .as_mut_ptr::<PageTableEntry>();
-                        let l2e = l2.add(p.p2_index().into()).read();
-                        dbg!(l4, l3, l2, l4e, l3e, l2e);
-                    }
-                    e
-                })
-                .ok()
-            })
-            .collect();
-
-        let virt_pages_inclusive = Self::claim_virtual_space(virt_size, &mut available_frames);
+        let frames: Vec<PhysFrame<Size2MiB>> = physical.collect();
 
         GlobalData {
-            allocs_per_page: PageMap::new(
-                phys_pages.count() + phys_pages.count() / 4,
-                virt_pages_inclusive.start,
-            ),
+            allocs_per_page: PageMap::new(frames.len() + frames.len() / 4, virt.start),
             pages_per_quantum: SmallCountHashMap::with_num_slots(1 << 16),
             quantum_storage: QuantumStorage::from_range(
-                ((virt_pages_inclusive.start.start_address().as_u64() & ADDRESS_BIT_MASK)
-                    >> VIRTUAL_QUANTUM_BITS) as u32
-                    ..(((virt_pages_inclusive.end + 1).start_address().as_u64() & ADDRESS_BIT_MASK)
+                ((virt.start.start_address().as_u64() & ADDRESS_BIT_MASK) >> VIRTUAL_QUANTUM_BITS)
+                    as u32
+                    ..((virt.end.start_address().as_u64() & ADDRESS_BIT_MASK)
                         >> VIRTUAL_QUANTUM_BITS) as u32,
             ),
-            available_frames: Mutex::new(available_frames),
+            available_frames: Mutex::new(frames),
         }
     }
 }
 
-pub struct LocalData<G: Deref<Target = GlobalData> + Send> {
+pub struct LocalData<S: SystemInterface, G: Deref<Target = GlobalData<S>> + Send> {
     rng: SmallRng,
-    available_frames: FrameList2M,
+    available_frames: FrameList2M<S>,
     // these are sign extended virtual addresses. be careful around the half of the address space
     min_address: u64,
     bump: u64,
@@ -160,12 +93,14 @@ pub struct LocalData<G: Deref<Target = GlobalData> + Send> {
     global: G,
 }
 
-unsafe impl<G: Deref<Target = GlobalData> + Send> TestAlloc for LocalData<G> {
+unsafe impl<S: SystemInterface, G: Deref<Target = GlobalData<S>> + Send> TestAlloc
+    for LocalData<S, G>
+{
     unsafe fn alloc(&mut self, layout: Layout) -> *mut u8 {
         log_alloc(layout.size() as isize);
         profile_function!();
         if layout.size() == 0 {
-            return VirtAddr::new(PHYS_OFFSET).as_mut_ptr();
+            return layout.dangling().as_ptr();
         }
         if layout.size() > MAX_MID_SIZE {
             return self.alloc_large(layout);
@@ -235,7 +170,7 @@ unsafe impl<G: Deref<Target = GlobalData> + Send> TestAlloc for LocalData<G> {
     }
 }
 
-impl<G: Deref<Target = GlobalData> + Send> LocalData<G> {
+impl<S: SystemInterface, G: Deref<Target = GlobalData<S>> + Send> LocalData<S, G> {
     fn get_frames(&mut self, count: usize) -> Result<(), ()> {
         profile_function!();
         self.available_frames
@@ -269,7 +204,7 @@ impl<G: Deref<Target = GlobalData> + Send> LocalData<G> {
         ));
         for i in 0..frame_count {
             unsafe {
-                map_huge_page(first_page + i as u64, self.available_frames.pop().unwrap());
+                S::map(first_page + i as u64, self.available_frames.pop().unwrap());
             }
         }
         first_page.start_address().as_mut_ptr()
@@ -318,8 +253,7 @@ impl<G: Deref<Target = GlobalData> + Send> LocalData<G> {
         let first_page = Page::<Size2MiB>::from_start_address(address).unwrap();
         for i in 0..frame_count {
             unsafe {
-                self.available_frames
-                    .push(unmap_huge_page(first_page + i as u64));
+                self.available_frames.push(S::unmap(first_page + i as u64));
             }
         }
         self.release_frames();
@@ -340,7 +274,7 @@ impl<G: Deref<Target = GlobalData> + Send> LocalData<G> {
         profile_function!();
         if let Some(x) = self.global.allocs_per_page.decrement(p) {
             self.available_frames.push(x);
-            unsafe { unmap_huge_page(p) };
+            unsafe { S::unmap(p) };
             self.global
                 .decrement_quantum(address_to_quantum(p.start_address()))
         }

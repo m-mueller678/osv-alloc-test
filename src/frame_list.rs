@@ -1,32 +1,34 @@
-use crate::paging::{paddr, vaddr};
-use crate::util::mask;
+use crate::page_map::mask;
+use crate::SystemInterface;
+use std::marker::PhantomData;
 use std::mem::{size_of, MaybeUninit};
 use std::ptr;
 use std::ptr::{addr_of_mut, replace};
 use x86_64::structures::paging::{PageSize, PhysFrame, Size2MiB, Size4KiB};
 use x86_64::VirtAddr;
 
-unsafe impl<S: PageSize, const C: usize> Send for FrameList<S, C> {}
+unsafe impl<S: PageSize, Sys: SystemInterface, const C: usize> Send for FrameList<S, Sys, C> {}
 
-pub struct FrameList<S: PageSize, const C: usize>(*mut ListFrame<S, C>);
+pub struct FrameList<S: PageSize, Sys: SystemInterface, const C: usize>(*mut ListFrame<S, Sys, C>);
 
-pub type FrameList4K = FrameList<Size4KiB, { 512 - 2 }>;
-pub type FrameList2M = FrameList<Size2MiB, { 512 * 512 - 2 }>;
+pub type FrameList4K<Sys: SystemInterface> = FrameList<Size4KiB, Sys, { 512 - 2 }>;
+pub type FrameList2M<Sys: SystemInterface> = FrameList<Size2MiB, Sys, { 512 * 512 - 2 }>;
 
-struct ListFrame<S: PageSize, const C: usize> {
+struct ListFrame<S: PageSize, Sys: SystemInterface, const C: usize> {
     count: usize,
-    next: *mut ListFrame<S, C>,
+    next: *mut ListFrame<S, Sys, C>,
     frames: [MaybeUninit<PhysFrame<S>>; C],
+    sys: PhantomData<Sys>,
 }
 
-impl<S: PageSize, const C: usize> Default for FrameList<S, C> {
+impl<S: PageSize, Sys: SystemInterface, const C: usize> Default for FrameList<S, Sys, C> {
     fn default() -> Self {
-        assert_eq!(size_of::<ListFrame<S, C>>(), S::SIZE as usize);
+        assert_eq!(size_of::<ListFrame<S, Sys, C>>(), S::SIZE as usize);
         FrameList(ptr::null_mut())
     }
 }
 
-impl<S: PageSize, const C: usize> FrameList<S, C> {
+impl<S: PageSize, Sys: SystemInterface, const C: usize> FrameList<S, Sys, C> {
     pub fn push(&mut self, f: PhysFrame<S>) {
         unsafe {
             if !self.0.is_null() {
@@ -56,7 +58,7 @@ impl<S: PageSize, const C: usize> FrameList<S, C> {
             };
             let frame = replace(&mut self.0, next);
             Some(Self::check_frame(
-                PhysFrame::from_start_address(paddr(VirtAddr::from_ptr(frame))).unwrap(),
+                PhysFrame::from_start_address(Sys::paddr(VirtAddr::from_ptr(frame))).unwrap(),
             ))
         }
     }
@@ -90,7 +92,7 @@ impl<S: PageSize, const C: usize> FrameList<S, C> {
 
     unsafe fn push_first(&mut self, f: PhysFrame<S>) {
         let old = self.0;
-        self.0 = vaddr(f.start_address()).as_mut_ptr::<ListFrame<S, C>>();
+        self.0 = Sys::vaddr(f.start_address()).as_mut_ptr::<ListFrame<S, Sys, C>>();
         *addr_of_mut!((*self.0).count) = 0;
         *addr_of_mut!((*self.0).next) = old;
     }

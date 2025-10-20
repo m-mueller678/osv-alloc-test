@@ -1,6 +1,6 @@
-use crate::util::mask;
+use crate::page_map::mask;
+use crate::system_interface::SystemInterface;
 
-use crate::paging::tlb_flush_global;
 use itertools::Itertools;
 use rand::distributions::Distribution;
 use rand::distributions::Uniform;
@@ -147,7 +147,11 @@ impl<const H: usize> BuddyTower<H> {
         );
     }
 
-    pub fn steal_all_and_flush(&self, other: &Self, transfer_buffer: &mut Vec<u32>) {
+    pub fn steal_all_and_flush<S: SystemInterface>(
+        &self,
+        other: &Self,
+        transfer_buffer: &mut Vec<u32>,
+    ) {
         debug_assert!(transfer_buffer.is_empty());
         for l in 0..H {
             for (i, x) in other.maps[l].pairs.iter().enumerate() {
@@ -156,7 +160,7 @@ impl<const H: usize> BuddyTower<H> {
                     if transfer_buffer.len() == transfer_buffer.capacity() {
                         // this should never happen with properly sized transfer vector
                         warn!("ran out of transfer buffer space");
-                        self.insert_transfer_vector(transfer_buffer);
+                        self.insert_transfer_vector::<S>(transfer_buffer);
                     }
                     let bit = taken.trailing_zeros();
                     taken ^= 1 << bit;
@@ -167,11 +171,11 @@ impl<const H: usize> BuddyTower<H> {
                 }
             }
         }
-        self.insert_transfer_vector(transfer_buffer);
+        self.insert_transfer_vector::<S>(transfer_buffer);
     }
 
-    fn insert_transfer_vector(&self, transfer_buffer: &mut Vec<u32>) {
-        tlb_flush_global();
+    fn insert_transfer_vector<S: SystemInterface>(&self, transfer_buffer: &mut Vec<u32>) {
+        S::global_tlb_flush();
         for x in &mut *transfer_buffer {
             self.insert(*x >> QUANTUM_ID_BITS, *x & mask::<u32>(QUANTUM_ID_BITS))
         }
