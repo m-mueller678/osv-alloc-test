@@ -33,10 +33,6 @@ itertools = "0.12.1"
 atom="0.4.0"
 fast-clock = "0.1.1"
 
-[[bin]]
-name = "virtual_alloc"
-required-features=["bin_features"]
-
 [lib]
 crate-type = ["staticlib"]
 name= "virtual_alloc"

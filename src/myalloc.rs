@@ -1,5 +1,4 @@
 use crate::frame_list::FrameList2M;
-use crate::log_allocs::log_alloc;
 use crate::myalloc::quantum_storage::QuantumStorage;
 use crate::page_map::{PageMap, SmallCountHashMap};
 use crate::{profile_function, SystemInterface, TestAlloc};
@@ -97,7 +96,6 @@ unsafe impl<S: SystemInterface, G: Deref<Target = GlobalData<S>> + Send> TestAll
     for LocalData<S, G>
 {
     unsafe fn alloc(&mut self, layout: Layout) -> *mut u8 {
-        log_alloc(layout.size() as isize);
         profile_function!();
         if layout.size() == 0 {
             return layout.dangling().as_ptr();
@@ -151,7 +149,6 @@ unsafe impl<S: SystemInterface, G: Deref<Target = GlobalData<S>> + Send> TestAll
     }
 
     unsafe fn dealloc(&mut self, ptr: *mut u8, layout: Layout) {
-        log_alloc(-(layout.size() as isize));
         profile_function!();
         if layout.size() == 0 {
             return;

@@ -27,6 +27,8 @@ pub unsafe trait SystemInterface: Sized {
     unsafe fn unmap(page: Page<Size2MiB>) -> PhysFrame<Size2MiB> {
         direct_access_unmap::<Self>(page)
     }
+    fn trace_recycle_backoff() {}
+    fn trace_recycle() {}
 }
 
 pub unsafe fn direct_access_map<S: SystemInterface>(

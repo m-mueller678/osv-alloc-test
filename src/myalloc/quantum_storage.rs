@@ -1,6 +1,4 @@
-use crate::log_allocs::log_alloc;
 use crate::myalloc::VIRTUAL_QUANTUM_BITS;
-use crate::LogAllocMessage;
 use crate::{buddymap::BuddyTower, SystemInterface};
 use rand::Rng;
 use std::marker::PhantomData;
@@ -29,11 +27,11 @@ impl<S: SystemInterface> QuantumStorage<S> {
 
     fn recycle(&self) {
         if let Ok(mut tb) = self.transfer_buffer.try_lock() {
-            log_alloc(LogAllocMessage::Recycle as isize);
+            S::trace_recycle();
             self.available_quanta
                 .steal_all_and_flush::<S>(&self.released_quanta, &mut tb);
         } else {
-            log_alloc(LogAllocMessage::RecycleBackoff as isize);
+            S::trace_recycle_backoff();
             // recycling in progress, just wait for it to be done.
             drop(self.transfer_buffer.lock());
         }

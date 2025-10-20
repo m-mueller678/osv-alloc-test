@@ -12,7 +12,6 @@ mod buddymap;
 mod frame_list;
 mod myalloc;
 mod page_map;
-mod profiling;
 mod system_interface;
 
 use std::alloc::Layout;
@@ -20,22 +19,6 @@ use std::alloc::Layout;
 pub use myalloc::{GlobalData, LocalData};
 pub use system_interface::SystemInterface;
 
-#[repr(isize)]
-#[allow(clippy::enum_clike_unportable_variant)]
-enum LogAllocMessage {
-    Dirty = 1_000_000_000_000_000_000,
-    PreFlush,
-    PostFlush,
-    Recycle,
-    RecycleBackoff,
-}
-#[cfg(feature = "log_allocations")]
-mod log_allocs;
-#[cfg(not(feature = "log_allocations"))]
-mod log_allocs {
-    pub fn log_alloc(_size: isize) {}
-    pub fn flush_alloc_log(_flush_id: u64) {}
-}
 #[cfg(feature = "local_api_clib")]
 mod static_lib;
 #[cfg(feature = "global_api_clib")]
