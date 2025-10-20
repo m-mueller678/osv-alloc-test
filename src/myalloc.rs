@@ -10,12 +10,11 @@ use std::ops::Deref;
 use std::ptr;
 use std::sync::Mutex;
 use tracing::error;
-use x86_64::structures::paging::frame::PhysFrameRange;
-use x86_64::structures::paging::page::PageRange;
 use x86_64::structures::paging::{Page, PageSize, PhysFrame, Size2MiB};
 use x86_64::VirtAddr;
 
 const VIRTUAL_QUANTUM_BITS: u32 = 24;
+const VIRTYAL_QUANTUM_SIZE: usize = 1 << VIRTUAL_QUANTUM_BITS;
 const MAX_MID_SIZE: usize = 16 << 20;
 const ADDRESS_BIT_MASK: u64 = (!0u64) >> 16;
 
@@ -53,28 +52,39 @@ impl<S: SystemInterface> GlobalData<S> {
         }
     }
 
-    pub fn new(physical: PhysFrameRange<Size2MiB>, virt: PageRange<Size2MiB>) -> Self {
-        assert!(virt
-            .start
-            .start_address()
-            .is_aligned(1u64 << VIRTUAL_QUANTUM_BITS));
-        assert!(virt
-            .end
-            .start_address()
-            .is_aligned(1u64 << VIRTUAL_QUANTUM_BITS));
-        assert!(virt.end - virt.start <= 1 << 46);
+    pub fn new(physical_size: usize, virt_size: usize) -> Self {
+        assert!(virt_size.is_multiple_of(VIRTYAL_QUANTUM_SIZE));
+        assert!(physical_size.is_multiple_of(Size2MiB::SIZE as usize));
+        let frame_count = physical_size / Size2MiB::SIZE as usize;
+        let page_count = virt_size / Size2MiB::SIZE as usize;
+        let virt_start = Page::from_start_address(S::allocate_virtual(
+            Layout::from_size_align(virt_size, VIRTYAL_QUANTUM_SIZE).unwrap(),
+        ))
+        .unwrap();
+        let virt_end = virt_start + page_count as u64;
 
-        let frames: Vec<PhysFrame<Size2MiB>> = physical.collect();
+        assert!(virt_size <= 1 << 46);
+
+        let frames: Vec<PhysFrame<Size2MiB>> = (0..frame_count)
+            .map(|_| {
+                PhysFrame::<Size2MiB>::from_start_address(S::allocate_physical(
+                    Layout::from_size_align(Size2MiB::SIZE as usize, Size2MiB::SIZE as usize)
+                        .unwrap(),
+                ))
+                .unwrap()
+            })
+            .collect();
 
         GlobalData {
-            allocs_per_page: PageMap::new(frames.len() + frames.len() / 4, virt.start),
+            allocs_per_page: PageMap::new(frame_count + frame_count / 4, virt_start),
             pages_per_quantum: SmallCountHashMap::with_num_slots(1 << 16),
-            quantum_storage: QuantumStorage::from_range(
-                ((virt.start.start_address().as_u64() & ADDRESS_BIT_MASK) >> VIRTUAL_QUANTUM_BITS)
-                    as u32
-                    ..((virt.end.start_address().as_u64() & ADDRESS_BIT_MASK)
-                        >> VIRTUAL_QUANTUM_BITS) as u32,
-            ),
+            quantum_storage: {
+                let start = ((virt_start.start_address().as_u64() & ADDRESS_BIT_MASK)
+                    >> VIRTUAL_QUANTUM_BITS) as u32;
+                let end = ((virt_end.start_address().as_u64() & ADDRESS_BIT_MASK)
+                    >> VIRTUAL_QUANTUM_BITS) as u32;
+                QuantumStorage::from_range(start..end)
+            },
             available_frames: Mutex::new(frames),
         }
     }

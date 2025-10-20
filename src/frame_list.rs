@@ -11,6 +11,7 @@ unsafe impl<S: PageSize, Sys: SystemInterface, const C: usize> Send for FrameLis
 
 pub struct FrameList<S: PageSize, Sys: SystemInterface, const C: usize>(*mut ListFrame<S, Sys, C>);
 
+#[allow(type_alias_bounds)]
 pub type FrameList2M<Sys: SystemInterface> = FrameList<Size2MiB, Sys, { 512 * 512 - 2 }>;
 
 struct ListFrame<S: PageSize, Sys: SystemInterface, const C: usize> {
