@@ -4,14 +4,13 @@ use std::marker::PhantomData;
 use std::mem::{size_of, MaybeUninit};
 use std::ptr;
 use std::ptr::{addr_of_mut, replace};
-use x86_64::structures::paging::{PageSize, PhysFrame, Size2MiB, Size4KiB};
+use x86_64::structures::paging::{PageSize, PhysFrame, Size2MiB};
 use x86_64::VirtAddr;
 
 unsafe impl<S: PageSize, Sys: SystemInterface, const C: usize> Send for FrameList<S, Sys, C> {}
 
 pub struct FrameList<S: PageSize, Sys: SystemInterface, const C: usize>(*mut ListFrame<S, Sys, C>);
 
-pub type FrameList4K<Sys: SystemInterface> = FrameList<Size4KiB, Sys, { 512 - 2 }>;
 pub type FrameList2M<Sys: SystemInterface> = FrameList<Size2MiB, Sys, { 512 * 512 - 2 }>;
 
 struct ListFrame<S: PageSize, Sys: SystemInterface, const C: usize> {
