@@ -24,23 +24,6 @@ mod static_lib;
 #[cfg(feature = "global_api_clib")]
 mod static_lib_global;
 
-#[cfg(feature = "puffin_profiling")]
-use puffin::{profile_function, profile_scope};
-
-#[cfg(not(feature = "puffin_profiling"))]
-#[macro_export]
-macro_rules! profile_function {
-    () => {};
-    ($data:expr) => {};
-}
-
-#[cfg(not(feature = "puffin_profiling"))]
-#[macro_export]
-macro_rules! profile_scope {
-    () => {};
-    ($data:expr) => {};
-}
-
 pub unsafe trait TestAlloc: Send {
     unsafe fn alloc(&mut self, layout: Layout) -> *mut u8;
     unsafe fn dealloc(&mut self, ptr: *mut u8, layout: Layout);
