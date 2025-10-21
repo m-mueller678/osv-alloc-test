@@ -10,6 +10,7 @@ use std::ops::Deref;
 use std::ptr;
 use std::sync::Mutex;
 use tracing::error;
+use x86_64::structures::paging::page::PageRangeInclusive;
 use x86_64::structures::paging::{Page, PageSize, PhysFrame, Size2MiB};
 use x86_64::VirtAddr;
 
@@ -83,6 +84,12 @@ impl<S: SystemInterface> GlobalData<S> {
                 .unwrap(),
             )
         }
+        unsafe {
+            sys.prepare_page_table(PageRangeInclusive {
+                start: virt_start,
+                end: virt_end - 1,
+            })
+        };
 
         GlobalData {
             allocs_per_page: PageMap::new_in(
