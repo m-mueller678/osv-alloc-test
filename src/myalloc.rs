@@ -123,6 +123,10 @@ pub struct LocalData<S: SystemInterface, G: Deref<Target = GlobalData<S>> + Send
     global: G,
 }
 
+fn wrapping_less_than(a: u64, b: u64) -> bool {
+    (a.wrapping_sub(b) as i64) < 0
+}
+
 unsafe impl<S: SystemInterface, G: Deref<Target = GlobalData<S>> + Send> TestAlloc
     for LocalData<S, G>
 {
@@ -133,9 +137,9 @@ unsafe impl<S: SystemInterface, G: Deref<Target = GlobalData<S>> + Send> TestAll
         if layout.size() > MAX_MID_SIZE {
             return self.alloc_large(layout);
         }
-        let aligned_bump = self.bump & !(layout.align() as u64 - 1);
-        let new_bump = aligned_bump - layout.size() as u64;
-        if new_bump < self.min_address {
+        let size = layout.size() as u64;
+        let new_bump = self.bump.wrapping_sub(size) & !(layout.align() as u64 - 1);
+        if wrapping_less_than(new_bump, self.min_address) {
             self.decrement_page(self.current_page);
             self.release_frames();
             self.claim_quantum().unwrap();
@@ -147,7 +151,8 @@ unsafe impl<S: SystemInterface, G: Deref<Target = GlobalData<S>> + Send> TestAll
                 .allocs_per_page
                 .increment_at(self.current_page_index, self.current_page);
         } else {
-            let max_page = Page::<Size2MiB>::containing_address(VirtAddr::new(aligned_bump) - 1u64);
+            let max_page =
+                Page::<Size2MiB>::containing_address(VirtAddr::new(new_bump + size) - 1u64);
             let required_frames = self.current_page - min_page;
             if self.get_frames(required_frames as usize).is_err() {
                 error!(size = layout.size(), "allocation failed");
