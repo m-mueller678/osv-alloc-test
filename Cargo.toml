@@ -13,7 +13,7 @@ global_api_clib=["dep:tracing-subscriber"]
 
 [dependencies]
 libc = "0.2.153"
-x86_64 = { version = "0.14.11",default-features = false,features = ["instructions"] }
+x86_64 = { version = "0.15",default-features = false,features = ["instructions"] }
 rand = {version = "0.8.5",features = ["small_rng"]}
 ahash = { version = "0.8.7" ,default-features = false,features = ["std"]}
 static_assertions = "1.1.0"
@@ -25,10 +25,6 @@ tracing-subscriber = {optional = true,version = "0.3.18"}
 itertools = "0.12.1"
 atom="0.4.0"
 
-[lib]
-crate-type = ["staticlib"]
-required-features = []
-name= "virtual_alloc"
 
 [profile.release]
 debug = 2

@@ -3,7 +3,6 @@
 #![feature(thread_local)]
 #![feature(generic_atomic)]
 #![feature(sync_unsafe_cell)]
-#![feature(new_zeroed_alloc)]
 #![feature(cold_path)]
 #![feature(allocator_api)]
 #![feature(alloc_layout_extra)]
@@ -13,8 +12,6 @@ mod frame_list;
 mod myalloc;
 mod page_map;
 mod system_interface;
-#[cfg(feature = "test")]
-mod test;
 
 use std::alloc::Layout;
 
