@@ -15,7 +15,7 @@ global_api_clib=["dep:tracing-subscriber"]
 libc = "0.2.153"
 x86_64 = { version = "0.15",default-features = false,features = ["instructions"] }
 rand = {version = "0.8.5",features = ["small_rng"]}
-ahash = { version = "0.8.7" ,default-features = false,features = ["std"]}
+ahash = { version = "0.8.7" ,default-features = false,features = ["std","compile-time-rng"]}
 static_assertions = "1.1.0"
 radium = {version = "1.1.1"}
 array-init = "2.1.0"
