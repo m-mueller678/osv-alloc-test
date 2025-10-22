@@ -1,4 +1,3 @@
-use ahash::RandomState;
 use radium::marker::{Atomic, BitOps, NumericOps};
 use radium::{Atom, Radium};
 use std::alloc::Allocator;
@@ -12,6 +11,7 @@ use std::sync::atomic::Ordering::Relaxed;
 use std::sync::Mutex;
 use x86_64::structures::paging::{Page, PhysFrame, Size2MiB};
 use x86_64::PhysAddr;
+use xxhash_rust::xxh3::Xxh3Default;
 
 pub trait BetterAtom:
     Atomic
@@ -48,7 +48,6 @@ pub struct SmallCountHashMap<T: BetterAtom, A: Allocator, const C: u32, const V:
 {
     slot_index_mask: usize,
     slots: Vec<Atom<T>, A>,
-    random_state: RandomState,
     #[cfg(feature = "hash_map_debug")]
     lock: std::sync::Mutex<std::collections::BTreeMap<T, (T, T), A>>,
 }
@@ -66,7 +65,6 @@ impl<T: BetterAtom, A: Allocator + Clone, const C: u32, const V: u32, const K: u
         SmallCountHashMap {
             slot_index_mask: s - 1,
             slots,
-            random_state: RandomState::with_seed(0xee61096f95490820),
             #[cfg(feature = "hash_map_debug")]
             lock: Mutex::new(BTreeMap::new_in(allocator)),
         }
@@ -155,7 +153,9 @@ impl<T: BetterAtom, A: Allocator + Clone, const C: u32, const V: u32, const K: u
     }
 
     fn target_slot(&self, k: T) -> usize {
-        self.random_state.hash_one(k) as usize & self.slot_index_mask
+        let mut hasher = Xxh3Default::new();
+        k.hash(&mut hasher);
+        hasher.digest() as usize & self.slot_index_mask
     }
 }
 

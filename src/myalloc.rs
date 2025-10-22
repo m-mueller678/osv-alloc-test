@@ -2,7 +2,6 @@ use crate::frame_list::{FrameList, FrameList2M};
 use crate::myalloc::quantum_storage::QuantumStorage;
 use crate::page_map::{PageMap, SmallCountHashMap};
 use crate::{SystemInterface, TestAlloc};
-use ahash::RandomState;
 use rand::rngs::SmallRng;
 use rand::SeedableRng;
 use std::alloc::Layout;
@@ -243,7 +242,7 @@ impl<S: SystemInterface, G: Deref<Target = GlobalData<S>> + Send> LocalData<S, G
 
     pub fn new(seed: u64, global: G) -> Result<Self, ()> {
         let mut r = LocalData {
-            rng: SmallRng::seed_from_u64(RandomState::with_seed(0xee61096f95490820).hash_one(seed)),
+            rng: SmallRng::seed_from_u64(seed),
             available_frames: FrameList::new(global.sys),
             min_address: 1u64 << 40,
             bump: 1 << 40,

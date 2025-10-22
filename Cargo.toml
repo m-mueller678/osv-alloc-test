@@ -8,20 +8,17 @@ edition = "2021"
 [features]
 default=[]
 hash_map_debug =[]
-local_api_clib=["dep:tracing-subscriber"]
-global_api_clib=["dep:tracing-subscriber"]
 
 [dependencies]
 libc = "0.2.153"
 x86_64 = { version = "0.15",default-features = false,features = ["instructions"] }
 rand = {version = "0.8.5",features = ["small_rng"]}
-ahash = { version = "0.8.7" ,default-features = false,features = ["std","compile-time-rng"]}
+xxhash-rust={version = "0.8.15",features = ["xxh3"]}
 static_assertions = "1.1.0"
 radium = {version = "1.1.1"}
 array-init = "2.1.0"
 next-gen={version = "0.1.1",default-features = false}
 tracing = {version = "0.1.40",features = ["release_max_level_warn"]}
-tracing-subscriber = {optional = true,version = "0.3.18"}
 itertools = "0.12.1"
 atom="0.4.0"
 
