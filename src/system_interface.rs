@@ -13,6 +13,8 @@ use x86_64::{
     PhysAddr, VirtAddr,
 };
 
+/// # Safety
+/// Addresses must be non-zero
 pub unsafe trait SystemInterface: Sized + Copy {
     fn allocate_virtual(self, layout: Layout) -> VirtAddr;
     fn allocate_physical(self, layout: Layout) -> PhysAddr;

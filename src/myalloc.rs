@@ -1,17 +1,17 @@
 use crate::frame_list::{FrameList, FrameList2M};
 use crate::myalloc::quantum_storage::QuantumStorage;
-use crate::page_map::{PageMap, SmallCountHashMap};
-use crate::{SystemInterface, TestAlloc};
+use crate::page_map::SmallCountHashMap;
+use crate::{unsafe_assert, SystemInterface, TestAlloc};
 use rand::rngs::SmallRng;
 use rand::SeedableRng;
 use std::alloc::Layout;
 use std::ops::Deref;
-use std::ptr;
+use std::ptr::{self, NonNull};
 use std::sync::Mutex;
 use tracing::error;
 use x86_64::structures::paging::page::PageRangeInclusive;
 use x86_64::structures::paging::{Page, PageSize, PhysFrame, Size2MiB};
-use x86_64::{align_down, VirtAddr};
+use x86_64::VirtAddr;
 
 const VIRTUAL_QUANTUM_BITS: u32 = 24;
 const VIRTYAL_QUANTUM_SIZE: usize = 1 << VIRTUAL_QUANTUM_BITS;
@@ -22,6 +22,7 @@ fn address_to_quantum(a: VirtAddr) -> u32 {
     ((a.as_u64() & ADDRESS_BIT_MASK) >> VIRTUAL_QUANTUM_BITS) as u32
 }
 
+mod bump_allocator;
 mod quantum_storage;
 
 pub struct GlobalData<S: SystemInterface> {
@@ -111,8 +112,6 @@ impl<S: SystemInterface> GlobalData<S> {
 }
 
 pub struct LocalData<S: SystemInterface, G: Deref<Target = GlobalData<S>> + Send> {
-    rng: SmallRng,
-    available_frames: FrameList2M<S>,
     // these are sign extended virtual addresses. be careful around the half of the address space
     min_address: u64,
     bump: u64,
@@ -122,8 +121,23 @@ pub struct LocalData<S: SystemInterface, G: Deref<Target = GlobalData<S>> + Send
     global: G,
 }
 
-fn wrapping_less_than(a: u64, b: u64) -> bool {
-    (a.wrapping_sub(b) as i64) < 0
+struct LocalCommon<S: SystemInterface, G: Deref<Target = GlobalData<S>>> {
+    global: G,
+    rng: SmallRng,
+    available_frames: FrameList2M<S>,
+}
+
+#[inline(always)]
+fn wrapping_less_than(a: usize, b: usize) -> bool {
+    (a.wrapping_sub(b) as isize) < 0
+}
+
+/// # Safety
+/// b must be a power of two.
+#[inline(always)]
+unsafe fn align_down(a: usize, b: usize) -> usize {
+    unsafe_assert!(b.is_power_of_two());
+    a & (b - 1)
 }
 
 unsafe impl<S: SystemInterface, G: Deref<Target = GlobalData<S>> + Send> TestAlloc

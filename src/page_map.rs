@@ -175,40 +175,6 @@ impl<T: BetterAtom, A: Allocator + Clone, const C: u32, const V: u32, const K: u
     }
 }
 
-pub struct PageMap<A: Allocator> {
-    pub base_page: Page<Size2MiB>,
-    inner: SmallCountHashMap<u64, A, 16, 21, 27>,
-}
-
-impl<A: Allocator + Clone> PageMap<A> {
-    pub fn new_in(num_slots: usize, base_page: Page<Size2MiB>, allocator: A) -> Self {
-        PageMap {
-            base_page,
-            inner: SmallCountHashMap::with_num_slots_in(num_slots, allocator),
-        }
-    }
-
-    pub fn decrement(&self, page: Page<Size2MiB>) -> Option<PhysFrame<Size2MiB>> {
-        unsafe {
-            std::hint::assert_unchecked(page > self.base_page);
-        }
-        self.inner
-            .decrement(page - self.base_page)
-            .map(|f| PhysFrame::containing_address(unsafe { PhysAddr::new_unsafe(f << 21) }))
-    }
-
-    pub fn insert(&self, page: Page<Size2MiB>, frame: PhysFrame<Size2MiB>, count: usize) -> usize {
-        self.inner.insert(
-            page - self.base_page,
-            frame.start_address().as_u64() >> 21,
-            count as u64,
-        )
-    }
-
-    pub fn increment_at(&self, index: usize, page: Page<Size2MiB>) {
-        self.inner.increment_at(index, page - self.base_page, 1)
-    }
-}
 pub fn mask<T: BetterAtom>(bits: u32) -> T {
     (T::from(1) << bits) - T::from(1)
 }
