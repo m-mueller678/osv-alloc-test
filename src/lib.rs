@@ -9,6 +9,7 @@
 #![feature(likely_unlikely)]
 
 mod buddymap;
+mod constants;
 mod frame_list;
 mod myalloc;
 mod page_map;

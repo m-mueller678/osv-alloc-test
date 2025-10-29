@@ -13,16 +13,12 @@ use x86_64::structures::paging::page::PageRangeInclusive;
 use x86_64::structures::paging::{Page, PageSize, PhysFrame, Size2MiB};
 use x86_64::VirtAddr;
 
-const VIRTUAL_QUANTUM_BITS: u32 = 24;
-const VIRTYAL_QUANTUM_SIZE: usize = 1 << VIRTUAL_QUANTUM_BITS;
-const MAX_MID_SIZE: usize = 16 << 20;
-const ADDRESS_BIT_MASK: u64 = (!0u64) >> 16;
-
 fn address_to_quantum(a: VirtAddr) -> u32 {
     ((a.as_u64() & ADDRESS_BIT_MASK) >> VIRTUAL_QUANTUM_BITS) as u32
 }
 
 mod bump_allocator;
+mod medium_allocator;
 mod quantum_storage;
 
 pub struct GlobalData<S: SystemInterface> {
