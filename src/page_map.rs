@@ -5,6 +5,7 @@ use std::alloc::Allocator;
 use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::hash::Hash;
+use std::hint::assert_unchecked;
 use std::ops::{Shl, Shr};
 use std::sync::atomic::Ordering::Relaxed;
 #[cfg(feature = "hash_map_debug")]
@@ -22,6 +23,7 @@ pub trait BetterAtom:
     + From<u8>
     + Debug
     + Hash
+    + Into<u64>
     + TryFrom<u64>
 {
 }
@@ -35,6 +37,7 @@ impl<
             + From<u8>
             + Debug
             + Hash
+            + Into<u64>
             + TryFrom<u64>,
     > BetterAtom for T
 {
@@ -100,7 +103,7 @@ impl<T: BetterAtom, A: Allocator + Clone, const C: u32, const V: u32, const K: u
                 }
                 return ret;
             } else {
-                i = (i + 1) & self.slot_index_mask;
+                i = self.next_slot(i);
             }
         }
     }
@@ -129,7 +132,7 @@ impl<T: BetterAtom, A: Allocator + Clone, const C: u32, const V: u32, const K: u
                     continue;
                 }
             } else {
-                i = (i + 1) & self.slot_index_mask;
+                i = self.next_slot(i);
             }
         }
     }
@@ -153,9 +156,22 @@ impl<T: BetterAtom, A: Allocator + Clone, const C: u32, const V: u32, const K: u
     }
 
     fn target_slot(&self, k: T) -> usize {
-        let mut hasher = Xxh3Default::new();
-        k.hash(&mut hasher);
-        hasher.digest() as usize & self.slot_index_mask
+        // let mut hasher = Xxh3Default::new();
+        // k.hash(&mut hasher);
+        // hasher.digest() as usize & self.slot_index_mask
+        let ret = <T as Into<u64>>::into(k) as usize & self.slot_index_mask;
+        unsafe {
+            std::hint::assert_unchecked(ret < self.slots.len());
+        }
+        ret
+    }
+
+    fn next_slot(&self, i: usize) -> usize {
+        let ret = (1 + i) & self.slot_index_mask;
+        unsafe {
+            std::hint::assert_unchecked(ret < self.slots.len());
+        }
+        ret
     }
 }
 
@@ -173,9 +189,12 @@ impl<A: Allocator + Clone> PageMap<A> {
     }
 
     pub fn decrement(&self, page: Page<Size2MiB>) -> Option<PhysFrame<Size2MiB>> {
+        unsafe {
+            std::hint::assert_unchecked(page > self.base_page);
+        }
         self.inner
             .decrement(page - self.base_page)
-            .map(|f| PhysFrame::containing_address(PhysAddr::new(f << 21)))
+            .map(|f| PhysFrame::containing_address(unsafe { PhysAddr::new_unsafe(f << 21) }))
     }
 
     pub fn insert(&self, page: Page<Size2MiB>, frame: PhysFrame<Size2MiB>, count: usize) -> usize {

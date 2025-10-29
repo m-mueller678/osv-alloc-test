@@ -11,7 +11,7 @@ use std::sync::Mutex;
 use tracing::error;
 use x86_64::structures::paging::page::PageRangeInclusive;
 use x86_64::structures::paging::{Page, PageSize, PhysFrame, Size2MiB};
-use x86_64::VirtAddr;
+use x86_64::{align_down, VirtAddr};
 
 const VIRTUAL_QUANTUM_BITS: u32 = 24;
 const VIRTYAL_QUANTUM_SIZE: usize = 1 << VIRTUAL_QUANTUM_BITS;
@@ -129,6 +129,7 @@ fn wrapping_less_than(a: u64, b: u64) -> bool {
 unsafe impl<S: SystemInterface, G: Deref<Target = GlobalData<S>> + Send> TestAlloc
     for LocalData<S, G>
 {
+    #[inline]
     unsafe fn alloc(&mut self, layout: Layout) -> *mut u8 {
         if layout.size() == 0 {
             return layout.dangling().as_ptr();
@@ -182,21 +183,35 @@ unsafe impl<S: SystemInterface, G: Deref<Target = GlobalData<S>> + Send> TestAll
         VirtAddr::new_unsafe(self.bump).as_mut_ptr()
     }
 
+    #[inline]
     unsafe fn dealloc(&mut self, ptr: *mut u8, layout: Layout) {
-        if layout.size() == 0 {
+        if std::hint::unlikely(layout.size() == 0) {
             return;
         }
-        if layout.size() > MAX_MID_SIZE {
+        if std::hint::unlikely(layout.size() > MAX_MID_SIZE) {
             return self.dealloc_large(ptr, layout);
         }
-        let start_addr = VirtAddr::from_ptr(ptr);
-        let min_page = Page::<Size2MiB>::containing_address(start_addr);
-        let max_page =
-            Page::<Size2MiB>::containing_address(start_addr + layout.size() as u64 - 1u64);
-        for p in Page::range_inclusive(min_page, max_page) {
-            self.decrement_page(p);
+        let start_addr = ptr.addr();
+        let end_addr = start_addr + layout.size();
+        let mut page = align_down(start_addr as u64, Size2MiB::SIZE);
+        loop {
+            self.decrement_page(Page::from_start_address_unchecked(VirtAddr::new_unsafe(
+                page,
+            )));
+            page += Size2MiB::SIZE;
+            if page >= end_addr as u64 {
+                break;
+            }
         }
         self.release_frames();
+    }
+}
+
+unsafe fn panic_or_ub<A, B>(a: A) -> B {
+    if cfg!(debug_assertions) {
+        panic!()
+    } else {
+        std::hint::unreachable_unchecked()
     }
 }
 

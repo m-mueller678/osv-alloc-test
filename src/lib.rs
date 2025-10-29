@@ -6,6 +6,7 @@
 #![feature(cold_path)]
 #![feature(allocator_api)]
 #![feature(alloc_layout_extra)]
+#![feature(likely_unlikely)]
 
 mod buddymap;
 mod frame_list;
