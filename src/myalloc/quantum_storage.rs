@@ -1,5 +1,8 @@
-use crate::myalloc::VIRTUAL_QUANTUM_BITS;
-use crate::{buddymap::BuddyTower, SystemInterface};
+use crate::{
+    buddymap::BuddyTower,
+    util::{QuantumShifted, VIRTUAL_QUANTUM_BITS},
+    SystemInterface,
+};
 use rand::Rng;
 use std::ops::Range;
 use std::sync::Mutex;
@@ -40,9 +43,9 @@ impl<S: SystemInterface> QuantumStorage<S> {
         debug_assert!(q < 1u32 << 31);
         self.available_quanta.insert(level, q)
     }
-    pub fn dealloc_dirty(&self, level: u32, q: u32) {
-        debug_assert!(q < 1u32 << 31);
-        self.released_quanta.insert(level, q)
+    pub fn dealloc_dirty(&self, level: u32, q: QuantumShifted) {
+        debug_assert!(q.0 < 1 << 31);
+        self.released_quanta.insert(level, q.0 as u32)
     }
 
     pub fn from_range(sys: S, range: Range<u32>) -> Self {

@@ -1,7 +1,9 @@
 use crate::{
-    constants::PAGE_SIZE,
-    myalloc::{align_down, wrapping_less_than, LocalCommon},
-    unsafe_assert, GlobalData, SystemInterface,
+    myalloc::LocalCommon,
+    util::{
+        align_down, align_down_const, unsafe_assert, vaddr_unchecked, wrapping_less_than, PAGE_SIZE,
+    },
+    GlobalData, SystemInterface,
 };
 use std::{
     alloc::Layout,
@@ -14,93 +16,106 @@ use std::{
         Ordering::{Acquire, Relaxed, Release},
     },
 };
-use x86_64::{structures::paging::PhysFrame, VirtAddr};
+use x86_64::structures::paging::PhysFrame;
 
 pub struct SmallAllocator<S: SystemInterface, G: Deref<Target = GlobalData<S>>> {
     bump: usize,
-    bump_limit: usize,
     _p: PhantomData<fn() -> G>,
 }
 
-struct BumpHeader {
+struct BumpFooter {
     count: AtomicUsize,
+}
+
+impl<S: SystemInterface, G: Deref<Target = GlobalData<S>>> Drop for SmallAllocator<S, G> {
+    fn drop(&mut self) {
+        assert!(self.bump == 0);
+    }
 }
 
 impl<S: SystemInterface, G: Deref<Target = GlobalData<S>>> SmallAllocator<S, G> {
     #[inline]
+    pub const fn new() -> Self {
+        SmallAllocator {
+            bump: 0,
+            _p: PhantomData,
+        }
+    }
+
+    #[inline]
+    pub fn deinit(&mut self, common: &mut LocalCommon<S, G>) {
+        if self.bump != 0 {
+            unsafe {
+                Self::decrement_counter(common, find_footer(self.bump));
+            }
+            self.bump = 0;
+        }
+    }
+
+    #[inline]
     pub fn alloc(&mut self, common: &mut LocalCommon<S, G>, layout: Layout) -> Option<NonNull<u8>> {
-        let size = layout.size();
-        unsafe_assert!(size > 0);
-        unsafe_assert!(size <= PAGE_SIZE / 2);
+        unsafe_assert!(layout.size() > 0);
+        unsafe_assert!(layout.size() <= PAGE_SIZE / 2);
         loop {
-            let new_bump = unsafe { align_down(self.bump.wrapping_sub(size), layout.align()) };
-            let bump_start = unsafe { align_down(self.bump_limit, PAGE_SIZE) as usize };
-            if std::hint::unlikely(wrapping_less_than(bump_start, self.bump_limit)) {
+            let new_bump =
+                unsafe { align_down(self.bump.wrapping_sub(layout.size()), layout.align()) };
+            let bump_limit = align_down_const::<PAGE_SIZE>(self.bump);
+            if std::hint::unlikely(wrapping_less_than(new_bump, bump_limit)) {
+                assert!(layout.align() <= PAGE_SIZE / 2);
                 self.claim_frame(common);
                 continue;
             }
             self.bump = new_bump;
             unsafe {
-                let bump_header = &*(bump_start as *const BumpHeader);
-                bump_header.count.fetch_add(1, Relaxed);
-                return Some(NonNull::new_unchecked(
-                    VirtAddr::new_unsafe(self.bump as u64).as_mut_ptr(),
-                ));
+                (*find_footer(new_bump)).count.fetch_add(1, Relaxed);
+                return Some(NonNull::new_unchecked(self.bump as *mut u8));
             }
         }
     }
 
     #[inline]
-    pub unsafe fn dealloc(&mut self, common: &mut LocalCommon<S, G>, ptr: *mut u8, layout: Layout) {
-        let size = layout.size();
-        unsafe_assert!(size > 0);
-        unsafe_assert!(size <= PAGE_SIZE / 2);
-        let counter = align_down(ptr.addr(), PAGE_SIZE) as *const BumpHeader;
-        Self::decrement_counter(common, counter);
+    pub unsafe fn dealloc(&mut self, common: &mut LocalCommon<S, G>, ptr: *mut u8) {
+        Self::decrement_counter(common, find_footer(ptr.addr()));
     }
 
     #[inline]
-    unsafe fn decrement_counter(common: &mut LocalCommon<S, G>, header: *const BumpHeader) {
-        let release = (*header).count.fetch_sub(1, Release) == 1;
+    unsafe fn decrement_counter(common: &mut LocalCommon<S, G>, footer: *const BumpFooter) {
+        let release = (*footer).count.fetch_sub(1, Release) == 1;
         if std::hint::unlikely(release) {
-            Self::release_frame(common, header);
+            Self::release_frame(common, footer);
         }
     }
 
-    unsafe fn release_frame(common: &mut LocalCommon<S, G>, header: *const BumpHeader) {
-        (*header).count.load(Acquire);
-        unsafe {
-            let vaddr = VirtAddr::new_unsafe(header.addr() as u64);
-            let paddr = common.global.sys.paddr(vaddr);
-            common
-                .available_frames
-                .push(PhysFrame::from_start_address_unchecked(paddr));
-            common
-                .available_frames
-                .release_extra_to_vec(&common.global.available_frames);
-        }
+    unsafe fn release_frame(common: &mut LocalCommon<S, G>, footer: *const BumpFooter) {
+        (*footer).count.load(Acquire);
+        let page = align_down_const::<PAGE_SIZE>(footer.addr());
+        let vaddr = unsafe { vaddr_unchecked(page) };
+        let paddr = common.global.sys.paddr(vaddr);
+        let frame = unsafe { PhysFrame::from_start_address_unchecked(paddr) };
+        unsafe { common.available_frames.push(frame) };
+        common
+            .available_frames
+            .release_extra_to_vec(&common.global.available_frames);
     }
 
     fn claim_frame(&mut self, common: &mut LocalCommon<S, G>) -> Result<(), ()> {
-        if self.bump != 0 {
-            unsafe {
-                Self::decrement_counter(
-                    common,
-                    (align_down(self.bump, PAGE_SIZE)) as *const BumpHeader,
-                );
-            }
-        }
+        self.deinit(common);
         common
             .available_frames
             .steal_from_vec(&common.global.available_frames, 1)?;
         let frame = common.available_frames.pop().ok_or(())?;
         let vaddr = common.global.sys.vaddr(frame.start_address());
         unsafe {
-            (*vaddr.as_ptr::<BumpHeader>()).count.store(1, Relaxed);
+            (*vaddr.as_ptr::<BumpFooter>()).count.store(1, Relaxed);
         }
         self.bump = vaddr.as_u64() as usize + PAGE_SIZE;
-        self.bump_limit =
-            vaddr.as_u64() as usize + mem::size_of::<BumpHeader>().next_multiple_of(64);
         Ok(())
     }
+}
+
+#[inline]
+fn find_footer(addr: usize) -> *const BumpFooter {
+    let max_addr = addr | (PAGE_SIZE - 1);
+    let address = max_addr - (mem::size_of::<BumpFooter>()) - 1;
+    address as *const BumpFooter
 }

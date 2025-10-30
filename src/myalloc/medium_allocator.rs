@@ -1,7 +1,10 @@
 use crate::{
-    constants::PAGE_SIZE,
-    myalloc::{align_down, wrapping_less_than, LocalCommon, VIRTUAL_QUANTUM_BITS},
-    unsafe_assert, GlobalData, SystemInterface,
+    myalloc::LocalCommon,
+    util::{
+        address_to_quantum, align_down, align_down_const, page_from_addr, unsafe_assert,
+        vaddr_unchecked, wrapping_less_than, PAGE_SIZE, VIRTUAL_QUANTUM_SIZE,
+    },
+    GlobalData, SystemInterface,
 };
 use std::{
     alloc::Layout,
@@ -11,102 +14,184 @@ use std::{
     ptr::NonNull,
     sync::atomic::{
         AtomicUsize,
-        Ordering::{Acquire, Release},
+        Ordering::{Acquire, Relaxed, Release},
     },
 };
-use x86_64::{
-    structures::paging::{Page, PageSize, Size2MiB},
-    VirtAddr,
-};
+use x86_64::{structures::paging::Page, VirtAddr};
 
-struct BumpAllocator<S: SystemInterface, G: Deref<Target = GlobalData<S>>> {
+pub struct MediumAllocator<S: SystemInterface, G: Deref<Target = GlobalData<S>>> {
     bump: usize,
     _p: PhantomData<fn() -> G>,
 }
 
-struct BumpHeader {
-    count: AtomicUsize,
+struct BumpFooter {
+    /// the page of the byte pointed to by bump has one count extra for the allocator.
+    /// pages below that page in the bump region are set to 1.
+    counts: [AtomicUsize; PAGES_PER_QUANTUM],
+    page_count: AtomicUsize,
 }
 
-const LIMIT: usize = 64;
+const FOOTER_SPACE: usize = mem::size_of::<BumpFooter>().next_multiple_of(64);
+const PAGES_PER_QUANTUM: usize = VIRTUAL_QUANTUM_SIZE / PAGE_SIZE;
+pub const MAX_MEDIUM_SIZE: usize = (VIRTUAL_QUANTUM_SIZE * PAGE_SIZE).isqrt();
 
-impl<S: SystemInterface, G: Deref<Target = GlobalData<S>>> BumpAllocator<S, G, SIZE_LOG> {
-    fn alloc(&mut self, common: &mut LocalCommon<S, G>, layout: Layout) -> Option<NonNull<u8>> {
-        let size = layout.size();
-        unsafe_assert!(size > 0);
-        unsafe_assert!(size <= PAGE_SIZE / 2);
+impl<S: SystemInterface, G: Deref<Target = GlobalData<S>>> Drop for MediumAllocator<S, G> {
+    fn drop(&mut self) {
+        assert!(self.bump == 0);
+    }
+}
+
+impl<S: SystemInterface, G: Deref<Target = GlobalData<S>>> MediumAllocator<S, G> {
+    #[inline]
+    pub const fn new() -> Self {
+        MediumAllocator {
+            bump: 0,
+            _p: PhantomData,
+        }
+    }
+
+    #[inline]
+    pub fn deinit(&mut self, common: &mut LocalCommon<S, G>) {
+        if std::hint::likely(self.bump != 0) {
+            unsafe { Self::decrement_page_counter(common, self.bump) };
+            self.bump = 0;
+        }
+    }
+
+    /// # Safety
+    /// layout size must be in range 1..=VIRTUAL_QUANTUM_SIZE/2
+    #[inline]
+    pub unsafe fn alloc(
+        &mut self,
+        common: &mut LocalCommon<S, G>,
+        layout: Layout,
+    ) -> Option<NonNull<u8>> {
+        unsafe_assert!(layout.size() > 0);
+        unsafe_assert!(layout.size() <= VIRTUAL_QUANTUM_SIZE / 2);
         loop {
-            let new_bump = unsafe { align_down(self.bump.wrapping_sub(size), layout.align()) };
-            let bump_start = unsafe { align_down(self.bump, PAGE_SIZE) as usize };
-            let min_addr = bump_start + LIMIT;
-            if std::hint::unlikely(wrapping_less_than(bump_start, min_addr)) {
-                self.renew_bump();
-                continue;
+            let new_bump =
+                unsafe { align_down(self.bump.wrapping_sub(layout.size()), layout.align()) };
+            let mut page_limit = align_down_const::<PAGE_SIZE>(self.bump);
+            if wrapping_less_than(new_bump, page_limit) {
+                let bump_limit = align_down_const::<VIRTUAL_QUANTUM_SIZE>(self.bump);
+                assert!(layout.align() <= PAGE_SIZE);
+                if std::hint::unlikely(wrapping_less_than(new_bump, bump_limit)) {
+                    self.claim_quantum(common);
+                    continue;
+                }
+                let allocation_end = self.bump + layout.size();
+                if std::hint::unlikely(allocation_end <= page_limit) {
+                    unsafe {
+                        Self::decrement_page_counter(common, self.bump);
+                    }
+                }
+                let new_page_limit = align_down_const::<PAGE_SIZE>(new_bump);
+                unsafe_assert!(new_page_limit < page_limit);
+                let missing_pages = (page_limit - new_page_limit) / PAGE_SIZE;
+                common
+                    .available_frames
+                    .steal_from_vec(&common.global.available_frames, missing_pages)
+                    .ok()?;
+                while page_limit > new_page_limit {
+                    page_limit -= PAGE_SIZE;
+                    unsafe_assert!(page_limit.is_multiple_of(PAGE_SIZE));
+                    unsafe {
+                        common.global.sys.map(
+                            Page::from_start_address_unchecked(VirtAddr::new_unsafe(
+                                page_limit as u64,
+                            )),
+                            common.available_frames.pop().unwrap(),
+                        );
+                    }
+                }
             }
             self.bump = new_bump;
-            return unsafe {
-                Some(NonNull::new_unchecked(
-                    VirtAddr::new_unsafe(self.bump as u64).as_mut_ptr(),
-                ))
-            };
-        }
-    }
-
-    unsafe fn decrement_counter(common: &mut LocalCommon<S, G>, header: *const BumpHeader) {
-        {
-            let header = &*header;
-            if std::hint::likely(header.count.fetch_sub(1, Release) != 1) {
-                return;
-            }
-            header.count.load(Acquire);
-        };
-        for page in (header.addr()..)
-            .step_by(1 << Self::PAGE_SIZE_LOG)
-            .take(1 << Self::PAGE_COUNT_LOG)
-        {
+            let page_index = page_limit / PAGE_SIZE % PAGES_PER_QUANTUM;
             unsafe {
-                let page = Page::from_start_address_unchecked(VirtAddr::new_unsafe(page as u64));
-                let frame = common.global.sys.unmap(page);
-                common.available_frames.push(frame);
+                (*find_footer(new_bump)).counts[page_index].fetch_add(1, Relaxed);
+                return Some(NonNull::new_unchecked(
+                    VirtAddr::new_unsafe(self.bump as u64).as_mut_ptr(),
+                ));
             }
         }
     }
 
-    fn renew_bump(&mut self) {}
+    /// # Safety
+    /// ptr must be allocated with size
+    #[inline]
+    pub unsafe fn dealloc(common: &mut LocalCommon<S, G>, ptr: *mut u8, size: usize) {
+        let mut addr = ptr.addr();
+        let end = addr + size;
+        unsafe_assert!(addr < end);
+        while addr < end {
+            Self::decrement_page_counter(common, addr);
+            addr += PAGE_SIZE
+        }
+    }
 
-    fn renew_bump(&mut self, common: &mut LocalCommon<S, G>) -> Result<(), ()> {
-        let q = common
+    #[inline]
+    unsafe fn decrement_page_counter(common: &mut LocalCommon<S, G>, address_in_page: usize) {
+        let footer = find_footer(address_in_page);
+        let page_index = address_in_page / PAGE_SIZE % PAGES_PER_QUANTUM;
+        if unsafe { &*footer }.counts[page_index].fetch_sub(1, Release) == 1 {
+            Self::on_page_counter_zero(common, address_in_page);
+        }
+    }
+
+    unsafe fn on_page_counter_zero(common: &mut LocalCommon<S, G>, address_in_page: usize) {
+        let footer = find_footer(address_in_page);
+        let page_index = address_in_page / PAGE_SIZE % PAGES_PER_QUANTUM;
+        let dealloc_quantum = unsafe {
+            (*footer).counts[page_index].load(Acquire);
+            (*footer).page_count.fetch_sub(1, Acquire) == 1
+        };
+        if page_index < PAGES_PER_QUANTUM - 1 {
+            Self::dealloc_page(common, address_in_page);
+        }
+        if dealloc_quantum {
+            Self::dealloc_page(common, address_in_page | (VIRTUAL_QUANTUM_SIZE - 1));
+            common.global.quantum_storage.dealloc_dirty(
+                0,
+                address_to_quantum(unsafe { vaddr_unchecked(address_in_page) }),
+            );
+        }
+    }
+
+    unsafe fn dealloc_page(common: &mut LocalCommon<S, G>, address_in_page: usize) {
+        let page = align_down_const::<PAGE_SIZE>(address_in_page);
+        let page = unsafe { page_from_addr(vaddr_unchecked(page)) };
+        let frame = unsafe { common.global.sys.unmap(page) };
+        common.available_frames.push(frame);
+    }
+
+    fn claim_quantum(&mut self, common: &mut LocalCommon<S, G>) -> Result<(), ()> {
+        self.deinit(common);
+        let quantum = common
             .global
             .quantum_storage
-            .alloc(Self::QUANTUM_COUNT_LOG, &mut common.rng)
+            .alloc(0, &mut common.rng)
             .ok_or(())?;
-        if self.bump != 0 {
-            common.global.decrement_quantum(q);
-            unsafe {
-                Self::decrement_counter(
-                    common,
-                    (align_down(self.bump, 1 << Self::SIZE)) as *const BumpHeader,
-                );
-            }
+        let last_page = unsafe {
+            Page::from_start_address_unchecked(VirtAddr::new_unsafe(
+                (quantum as usize * VIRTUAL_QUANTUM_SIZE + (PAGES_PER_QUANTUM - 1) * PAGE_SIZE)
+                    as u64,
+            ))
+        };
+        let frame = common.available_frames.pop().unwrap();
+        unsafe { common.global.sys.map(last_page, frame) };
+        let footer = unsafe { &*find_footer(last_page.start_address().as_u64() as usize) };
+        for c in &footer.counts {
+            c.store(1, Relaxed);
         }
-        common
-            .available_frames
-            .steal_from_vec(&common.global.available_frames, 1 << Self::PAGE_COUNT_LOG)?;
-
-        self.min_address = VirtAddr::new((q as u64) << VIRTUAL_QUANTUM_BITS).as_u64();
-        self.bump = VirtAddr::new((q as u64 + 1) << VIRTUAL_QUANTUM_BITS).as_u64();
-        debug_assert!(self.min_address | ADDRESS_BIT_MASK == self.bump | ADDRESS_BIT_MASK);
-        self.current_quantum_index = self.global.pages_per_quantum.insert(q, 0, 1);
-        self.current_page = Page::from_start_address(VirtAddr::new(self.bump)).unwrap() - 1;
-        self.current_page_index =
-            self.global
-                .map_and_insert(self.current_page, self.available_frames.pop().unwrap(), 1);
+        footer.page_count.store(footer.counts.len(), Relaxed);
+        self.bump = align_down_const::<64>((footer as *const BumpFooter).addr());
         Ok(())
     }
 }
 
-#[cfg(target_arch = "x86_64")]
-fn vaddr_from_ref<T>(x: &T) {
-    assert!(mem::size_of::<T>() > 0);
-    unsafe { VirtAddr::new_unsafe((x as *const T).addr() as u64) }
+#[inline]
+fn find_footer(addr: usize) -> *const BumpFooter {
+    let max_addr = addr | (VIRTUAL_QUANTUM_SIZE - 1);
+    let address = max_addr - (mem::size_of::<BumpFooter>()) - 1;
+    address as *const BumpFooter
 }

@@ -9,11 +9,11 @@
 #![feature(likely_unlikely)]
 
 mod buddymap;
-mod constants;
 mod frame_list;
 mod myalloc;
 mod page_map;
 mod system_interface;
+mod util;
 
 use std::alloc::Layout;
 
@@ -24,16 +24,3 @@ pub unsafe trait TestAlloc: Send {
     unsafe fn alloc(&mut self, layout: Layout) -> *mut u8;
     unsafe fn dealloc(&mut self, ptr: *mut u8, layout: Layout);
 }
-
-macro_rules! unsafe_assert {
-    ($x:expr) => {
-        if cfg!(debug_assertions) {
-            assert!($x);
-        } else {
-            unsafe {
-                std::hint::assert_unchecked($x);
-            }
-        }
-    };
-}
-pub(crate) use unsafe_assert;

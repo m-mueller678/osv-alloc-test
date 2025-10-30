@@ -27,7 +27,7 @@ impl<S: PageSize, Sys: SystemInterface, const C: usize> FrameList<S, Sys, C> {
         assert_eq!(size_of::<ListFrame<S, Sys, C>>(), S::SIZE as usize);
         FrameList { head: None, sys }
     }
-    pub fn push(&mut self, f: PhysFrame<S>) {
+    pub unsafe fn push(&mut self, f: PhysFrame<S>) {
         if let Some(mut head) = self.head {
             let list = unsafe { head.as_mut() };
             assert!(list.count < list.frames.len());
