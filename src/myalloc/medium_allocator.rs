@@ -3,8 +3,8 @@ use crate::{
     myalloc::LocalCommon,
     quantum_address::QuantumAddress,
     util::{
-        align_down, align_down_const, page_from_addr, unsafe_assert, vaddr_unchecked,
-        wrapping_less_than, PAGE_SIZE, VIRTUAL_QUANTUM_SIZE,
+        align_down, align_down_const, align_up_const, page_from_addr, unsafe_assert,
+        vaddr_unchecked, wrapping_less_than, PAGE_SIZE, VIRTUAL_QUANTUM_SIZE,
     },
     GlobalData, SystemInterface,
 };
@@ -106,10 +106,11 @@ impl<S: SystemInterface, G: Deref<Target = GlobalData<S>>> MediumAllocator<S, G>
             }
             self.bump = new_bump;
             let page_index = page_limit / PAGE_SIZE % PAGES_PER_QUANTUM;
+            let footer = find_footer(new_bump);
             unsafe {
-                (*find_footer(new_bump)).counts[page_index].fetch_add(1, Relaxed);
+                (*footer).counts[page_index].fetch_add(1, Relaxed);
                 return Some(NonNull::new_unchecked(
-                    VirtAddr::new_unsafe(self.bump as u64).as_mut_ptr(),
+                    vaddr_unchecked(self.bump).as_mut_ptr(),
                 ));
             }
         }
@@ -119,12 +120,11 @@ impl<S: SystemInterface, G: Deref<Target = GlobalData<S>>> MediumAllocator<S, G>
     /// ptr must be allocated with size
     #[inline]
     pub unsafe fn dealloc(common: &mut LocalCommon<S, G>, ptr: *mut u8, size: usize) {
-        let mut addr = ptr.addr();
-        let end = addr + size;
-        unsafe_assert!(addr < end);
-        while addr < end {
-            Self::decrement_page_counter(common, addr);
-            addr += PAGE_SIZE
+        let start = align_down_const::<PAGE_SIZE>(ptr.addr());
+        let end = align_up_const::<PAGE_SIZE>(ptr.addr() + size);
+        unsafe_assert!(start < end);
+        for i in (start..end).step_by(PAGE_SIZE) {
+            Self::decrement_page_counter(common, i);
         }
     }
 
@@ -132,7 +132,8 @@ impl<S: SystemInterface, G: Deref<Target = GlobalData<S>>> MediumAllocator<S, G>
     unsafe fn decrement_page_counter(common: &mut LocalCommon<S, G>, address_in_page: usize) {
         let footer = find_footer(address_in_page);
         let page_index = address_in_page / PAGE_SIZE % PAGES_PER_QUANTUM;
-        if unsafe { &*footer }.counts[page_index].fetch_sub(1, Release) == 1 {
+        let old_count = unsafe { (*footer).counts[page_index].fetch_sub(1, Release) };
+        if old_count == 1 {
             Self::on_page_counter_zero(common, address_in_page);
         }
     }

@@ -61,6 +61,12 @@ pub fn align_down_const<const ALIGN: usize>(a: usize) -> usize {
     a & mask
 }
 
+#[inline(always)]
+pub fn align_up_const<const ALIGN: usize>(a: usize) -> usize {
+    assert!(ALIGN.is_power_of_two());
+    a.next_multiple_of(ALIGN)
+}
+
 pub unsafe fn map_unreachable<A, B>() -> impl FnOnce(A) -> B {
     |_| {
         if cfg!(debug_assertions) {
