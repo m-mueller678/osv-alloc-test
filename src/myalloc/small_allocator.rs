@@ -74,7 +74,7 @@ impl<S: SystemInterface, G: Deref<Target = GlobalData<S>>> SmallAllocator<S, G> 
     }
 
     #[inline]
-    pub unsafe fn dealloc(&mut self, common: &mut LocalCommon<S, G>, ptr: *mut u8) {
+    pub unsafe fn dealloc(common: &mut LocalCommon<S, G>, ptr: *mut u8) {
         Self::decrement_counter(common, find_footer(ptr.addr()));
     }
 
@@ -92,24 +92,23 @@ impl<S: SystemInterface, G: Deref<Target = GlobalData<S>>> SmallAllocator<S, G> 
         let vaddr = unsafe { vaddr_unchecked(page) };
         let paddr = common.global.sys.paddr(vaddr);
         let frame = unsafe { PhysFrame::from_start_address_unchecked(paddr) };
-        unsafe { common.available_frames.push(frame) };
+        unsafe { common.available_frames.push(frame).unwrap() };
         common
             .available_frames
             .release_extra_to_vec(&common.global.available_frames);
     }
 
-    fn claim_frame(&mut self, common: &mut LocalCommon<S, G>) -> Result<(), ()> {
+    fn claim_frame(&mut self, common: &mut LocalCommon<S, G>) -> Option<()> {
         self.deinit(common);
-        common
+        let frame = common
             .available_frames
-            .steal_from_vec(&common.global.available_frames, 1)?;
-        let frame = common.available_frames.pop().ok_or(())?;
+            .pop_with_refill(&common.global.available_frames, 1)?;
         let vaddr = common.global.sys.vaddr(frame.start_address());
         unsafe {
             (*vaddr.as_ptr::<BumpFooter>()).count.store(1, Relaxed);
         }
         self.bump = vaddr.as_u64() as usize + PAGE_SIZE;
-        Ok(())
+        Some(())
     }
 }
 

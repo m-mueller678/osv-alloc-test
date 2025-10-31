@@ -1,4 +1,5 @@
-use crate::{unsafe_assert, SystemInterface};
+use crate::util::unsafe_assert;
+use crate::SystemInterface;
 use std::marker::PhantomData;
 use std::mem::{size_of, MaybeUninit};
 use std::ptr::NonNull;
@@ -27,10 +28,14 @@ impl<S: PageSize, Sys: SystemInterface, const C: usize> FrameList<S, Sys, C> {
         assert_eq!(size_of::<ListFrame<S, Sys, C>>(), S::SIZE as usize);
         FrameList { head: None, sys }
     }
-    pub unsafe fn push(&mut self, f: PhysFrame<S>) {
+
+    pub unsafe fn push(&mut self, f: PhysFrame<S>) -> Result<(), ()> {
         if let Some(mut head) = self.head {
             let list = unsafe { head.as_mut() };
-            assert!(list.count < list.frames.len());
+            unsafe_assert!(list.count <= list.frames.len());
+            if list.count == list.frames.len() {
+                return Err(());
+            }
             list.frames[list.count].write(f);
             list.count += 1;
         } else {
@@ -38,9 +43,38 @@ impl<S: PageSize, Sys: SystemInterface, const C: usize> FrameList<S, Sys, C> {
             unsafe_assert!(!vaddr.is_null());
             self.head = Some(NonNull::new(vaddr.as_mut_ptr()).unwrap());
         }
+        Ok(())
+    }
+
+    pub unsafe fn push_with_spill(
+        &mut self,
+        f: PhysFrame<S>,
+        dst: &Mutex<Vec<PhysFrame<S>, Sys::Alloc>>,
+    ) {
+        if self.push(f).is_err() {
+            let mut dst = dst.lock().unwrap();
+            while self.count() > 1 {
+                dst.push(self.pop().unwrap());
+            }
+            self.push(f).unwrap();
+        }
     }
 
     pub const CAPACITY: usize = C + 1;
+    pub const DEFAULT_REFILL_SIZE: usize = 4;
+
+    pub fn pop_with_refill(
+        &mut self,
+        src: &Mutex<Vec<PhysFrame<S>, Sys::Alloc>>,
+        refill_size: usize,
+    ) -> Option<PhysFrame<S>> {
+        assert!(refill_size > 0);
+        if let Some(x) = self.pop() {
+            return Some(x);
+        }
+        self.steal_from_vec(src, refill_size)?;
+        Some(self.pop().unwrap())
+    }
 
     pub fn pop(&mut self) -> Option<PhysFrame<S>> {
         let head = unsafe { self.head?.as_mut() };
@@ -77,18 +111,15 @@ impl<S: PageSize, Sys: SystemInterface, const C: usize> FrameList<S, Sys, C> {
         &mut self,
         src: &Mutex<Vec<PhysFrame<S>, Sys::Alloc>>,
         target_count: usize,
-    ) -> Result<(), ()> {
+    ) -> Option<()> {
         if self.count() >= target_count {
-            return Ok(());
+            return Some(());
         }
+        assert!(target_count < Self::CAPACITY);
         let mut src = src.lock().unwrap();
         while self.count() < target_count {
-            self.push(src.pop().ok_or(())?);
+            unsafe { self.push(src.pop()?).unwrap() };
         }
-        Ok(())
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.head.is_none()
+        Some(())
     }
 }

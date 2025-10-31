@@ -1,8 +1,10 @@
 use crate::{
+    frame_list::FrameList2M,
     myalloc::LocalCommon,
+    quantum_address::QuantumAddress,
     util::{
-        address_to_quantum, align_down, align_down_const, page_from_addr, unsafe_assert,
-        vaddr_unchecked, wrapping_less_than, PAGE_SIZE, VIRTUAL_QUANTUM_SIZE,
+        align_down, align_down_const, page_from_addr, unsafe_assert, vaddr_unchecked,
+        wrapping_less_than, PAGE_SIZE, VIRTUAL_QUANTUM_SIZE,
     },
     GlobalData, SystemInterface,
 };
@@ -31,9 +33,7 @@ struct BumpFooter {
     page_count: AtomicUsize,
 }
 
-const FOOTER_SPACE: usize = mem::size_of::<BumpFooter>().next_multiple_of(64);
 const PAGES_PER_QUANTUM: usize = VIRTUAL_QUANTUM_SIZE / PAGE_SIZE;
-pub const MAX_MEDIUM_SIZE: usize = (VIRTUAL_QUANTUM_SIZE * PAGE_SIZE).isqrt();
 
 impl<S: SystemInterface, G: Deref<Target = GlobalData<S>>> Drop for MediumAllocator<S, G> {
     fn drop(&mut self) {
@@ -76,7 +76,7 @@ impl<S: SystemInterface, G: Deref<Target = GlobalData<S>>> MediumAllocator<S, G>
                 let bump_limit = align_down_const::<VIRTUAL_QUANTUM_SIZE>(self.bump);
                 assert!(layout.align() <= PAGE_SIZE);
                 if std::hint::unlikely(wrapping_less_than(new_bump, bump_limit)) {
-                    self.claim_quantum(common);
+                    self.claim_quantum(common)?;
                     continue;
                 }
                 let allocation_end = self.bump + layout.size();
@@ -90,8 +90,7 @@ impl<S: SystemInterface, G: Deref<Target = GlobalData<S>>> MediumAllocator<S, G>
                 let missing_pages = (page_limit - new_page_limit) / PAGE_SIZE;
                 common
                     .available_frames
-                    .steal_from_vec(&common.global.available_frames, missing_pages)
-                    .ok()?;
+                    .steal_from_vec(&common.global.available_frames, missing_pages)?;
                 while page_limit > new_page_limit {
                     page_limit -= PAGE_SIZE;
                     unsafe_assert!(page_limit.is_multiple_of(PAGE_SIZE));
@@ -150,10 +149,10 @@ impl<S: SystemInterface, G: Deref<Target = GlobalData<S>>> MediumAllocator<S, G>
         }
         if dealloc_quantum {
             Self::dealloc_page(common, address_in_page | (VIRTUAL_QUANTUM_SIZE - 1));
-            common.global.quantum_storage.dealloc_dirty(
-                0,
-                address_to_quantum(unsafe { vaddr_unchecked(address_in_page) }),
-            );
+            common
+                .global
+                .quantum_storage
+                .dealloc_dirty(0, QuantumAddress::containing(address_in_page));
         }
     }
 
@@ -161,23 +160,24 @@ impl<S: SystemInterface, G: Deref<Target = GlobalData<S>>> MediumAllocator<S, G>
         let page = align_down_const::<PAGE_SIZE>(address_in_page);
         let page = unsafe { page_from_addr(vaddr_unchecked(page)) };
         let frame = unsafe { common.global.sys.unmap(page) };
-        common.available_frames.push(frame);
+        common.available_frames.push(frame).unwrap();
+        common
+            .available_frames
+            .release_extra_to_vec(&common.global.available_frames);
     }
 
-    fn claim_quantum(&mut self, common: &mut LocalCommon<S, G>) -> Result<(), ()> {
+    fn claim_quantum(&mut self, common: &mut LocalCommon<S, G>) -> Option<()> {
         self.deinit(common);
-        let quantum = common
-            .global
-            .quantum_storage
-            .alloc(0, &mut common.rng)
-            .ok_or(())?;
-        let last_page = unsafe {
-            Page::from_start_address_unchecked(VirtAddr::new_unsafe(
-                (quantum as usize * VIRTUAL_QUANTUM_SIZE + (PAGES_PER_QUANTUM - 1) * PAGE_SIZE)
-                    as u64,
-            ))
+        let quantum = common.global.quantum_storage.alloc(0, &mut common.rng)?;
+        let last_page = quantum.start() + (PAGES_PER_QUANTUM - 1) * PAGE_SIZE;
+        let last_page = unsafe { page_from_addr(vaddr_unchecked(last_page)) };
+        let Some(frame) = common.available_frames.pop_with_refill(
+            &common.global.available_frames,
+            FrameList2M::<S>::DEFAULT_REFILL_SIZE,
+        ) else {
+            common.global.quantum_storage.dealloc_clean(0, quantum);
+            return None;
         };
-        let frame = common.available_frames.pop().unwrap();
         unsafe { common.global.sys.map(last_page, frame) };
         let footer = unsafe { &*find_footer(last_page.start_address().as_u64() as usize) };
         for c in &footer.counts {
@@ -185,7 +185,7 @@ impl<S: SystemInterface, G: Deref<Target = GlobalData<S>>> MediumAllocator<S, G>
         }
         footer.page_count.store(footer.counts.len(), Relaxed);
         self.bump = align_down_const::<64>((footer as *const BumpFooter).addr());
-        Ok(())
+        Some(())
     }
 }
 

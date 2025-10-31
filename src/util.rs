@@ -9,6 +9,7 @@ macro_rules! unsafe_assert {
         }
     };
 }
+
 pub(crate) use unsafe_assert;
 
 use x86_64::{
@@ -18,8 +19,6 @@ use x86_64::{
 
 pub const VIRTUAL_QUANTUM_BITS: u32 = 24;
 pub const VIRTUAL_QUANTUM_SIZE: usize = 1 << VIRTUAL_QUANTUM_BITS;
-pub const MAX_SMALL_SIZE: usize = 16 << 20;
-pub const ADDRESS_BIT_MASK: usize = usize::MAX >> 16;
 pub const PAGE_SIZE_LOG: u32 = 21;
 pub const PAGE_SIZE: usize = 1 << PAGE_SIZE_LOG;
 
@@ -37,13 +36,6 @@ pub unsafe fn vaddr_unchecked(addr: usize) -> VirtAddr {
     } else {
         VirtAddr::new_unsafe(addr as u64)
     }
-}
-
-/// the starting address of a virtaul quantum, masked to lower half of addresses and shifted by [VIRTUAL_QUANTUM_BITS]
-pub struct QuantumShifted(pub usize);
-
-pub fn address_to_quantum(a: VirtAddr) -> QuantumShifted {
-    QuantumShifted((a.as_u64() as usize & ADDRESS_BIT_MASK) >> VIRTUAL_QUANTUM_BITS)
 }
 
 #[inline(always)]
@@ -65,5 +57,15 @@ pub fn align_down_const<const ALIGN: usize>(a: usize) -> usize {
         assert!(ALIGN.is_power_of_two());
         ALIGN - 1
     };
-    a & ALIGN
+    a & mask
+}
+
+pub unsafe fn map_unreachable<A, B>() -> impl FnOnce(A) -> B {
+    |_| {
+        if cfg!(debug_assertions) {
+            panic!()
+        } else {
+            std::hint::unreachable_unchecked()
+        }
+    }
 }
