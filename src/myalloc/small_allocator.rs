@@ -115,6 +115,6 @@ impl<S: SystemInterface, G: Deref<Target = GlobalData<S>>> SmallAllocator<S, G> 
 #[inline]
 fn find_footer(addr: usize) -> *const BumpFooter {
     let max_addr = addr | (PAGE_SIZE - 1);
-    let address = max_addr - (mem::size_of::<BumpFooter>()) - 1;
+    let address = max_addr - (mem::size_of::<BumpFooter>() - 1);
     address as *const BumpFooter
 }
