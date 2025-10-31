@@ -28,7 +28,7 @@ impl<S: SystemInterface> QuantumStorage<S> {
                 let base = self.quantum_base.load(Relaxed);
                 // if a quantum was found, the storage must have been initialised.
                 debug_assert!(base != 0);
-                let addr = x + base;
+                let addr = x * VIRTUAL_QUANTUM_SIZE + base;
                 unsafe_assert!(addr != 0);
                 return Some(QuantumAddress::from_start(addr));
             }
