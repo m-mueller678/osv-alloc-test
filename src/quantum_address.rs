@@ -1,4 +1,4 @@
-use std::num::NonZeroUsize;
+use std::{fmt, num::NonZeroUsize};
 
 use x86_64::VirtAddr;
 
@@ -7,6 +7,12 @@ use crate::util::{align_down_const, VIRTUAL_QUANTUM_SIZE};
 /// The starting address of a virtual quantum
 #[derive(Clone, Copy)]
 pub struct QuantumAddress(NonZeroUsize);
+
+impl fmt::Debug for QuantumAddress {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "QuantumAddress({:x})", self.0.get())
+    }
+}
 
 impl QuantumAddress {
     pub fn start(self) -> usize {

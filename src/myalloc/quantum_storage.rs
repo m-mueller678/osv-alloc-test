@@ -1,6 +1,6 @@
 use crate::{
     quantum_address::QuantumAddress,
-    util::{unsafe_assert, VIRTUAL_QUANTUM_BITS, VIRTUAL_QUANTUM_SIZE},
+    util::{unsafe_assert, VIRTUAL_QUANTUM_SIZE},
     SystemInterface,
 };
 use buddy_bitmap::BuddyTower;
@@ -86,7 +86,8 @@ impl<S: SystemInterface> QuantumStorage<S> {
     pub fn from_range(sys: S, range: Range<QuantumAddress>) -> Self {
         assert!(range.start.start().is_multiple_of(VIRTUAL_QUANTUM_SIZE));
         assert!(range.end.start().is_multiple_of(VIRTUAL_QUANTUM_SIZE));
-        let quantum_count = (range.end.start() - range.start.start()) / VIRTUAL_QUANTUM_SIZE;
+        let byte_size = range.end.start() - range.start.start();
+        let quantum_count = (byte_size) / VIRTUAL_QUANTUM_SIZE;
         let ret = QuantumStorage {
             quantum_base: AtomicUsize::new(range.start.start()),
             available_quanta: BuddyTower::new(quantum_count, sys.allocator()),
@@ -94,18 +95,14 @@ impl<S: SystemInterface> QuantumStorage<S> {
             transfer_buffer: Mutex::new(Vec::with_capacity_in(quantum_count / 2, sys.allocator())),
             sys,
         };
-        let mut i = range.start;
-        while i.start() < range.end.start() {
-            let remaining_bytes = range.end.start() - i.start();
-            let size_log = remaining_bytes.ilog2();
-            let align_log = i.start().trailing_zeros();
-            let chunk_log = align_log.min(size_log);
-            let chunk_size = 1 << size_log;
-            debug_assert!(chunk_size + i.start() <= range.end.start());
-            let level = chunk_log - VIRTUAL_QUANTUM_BITS;
-            ret.dealloc_clean(level, i);
-            i = QuantumAddress::from_start(i.start() + chunk_size);
+        let mut i = 0;
+        while i < quantum_count {
+            let remaining_quanta = quantum_count - i;
+            let level = i.trailing_zeros().min(remaining_quanta.ilog2());
+            ret.available_quanta.insert(i, level);
+            i += 1 << level;
         }
+        debug_assert!(i == quantum_count);
         ret
     }
 }
