@@ -1,4 +1,4 @@
-use log::warn;
+use log::{debug, warn};
 use std::{
     alloc::{Allocator, Layout},
     mem::MaybeUninit,
@@ -42,6 +42,7 @@ pub unsafe fn direct_access_map(
     page: Page<Size2MiB>,
     frame: PhysFrame<Size2MiB>,
 ) {
+    debug!("mapping {page:?} to {frame:?}");
     let (l4_frame, _) = Cr3::read();
     let l4 = sys
         .vaddr(l4_frame.start_address())
@@ -91,7 +92,9 @@ pub unsafe fn direct_access_unmap(
     debug_assert!(l2_entry
         .flags()
         .contains(PageTableFlags::PRESENT | PageTableFlags::HUGE_PAGE));
-    PhysFrame::from_start_address(l2_entry.addr()).unwrap()
+    let frame = PhysFrame::from_start_address(l2_entry.addr()).unwrap();
+    debug!("unmapped {page:?}, was {frame:?}");
+    frame
 }
 
 pub fn direct_access_prepare_page_table(

@@ -5,6 +5,7 @@ use crate::{
     },
     GlobalData, SystemInterface,
 };
+use log::debug;
 use std::{
     alloc::Layout,
     marker::PhantomData,
@@ -92,6 +93,7 @@ impl<S: SystemInterface, G: Deref<Target = GlobalData<S>>> SmallAllocator<S, G> 
         let vaddr = unsafe { vaddr_unchecked(page) };
         let paddr = common.global.sys.paddr(vaddr);
         let frame = unsafe { PhysFrame::from_start_address_unchecked(paddr) };
+        debug!("releasing frame {frame:?}");
         unsafe { common.available_frames.push(frame).unwrap() };
         common
             .available_frames
@@ -103,6 +105,7 @@ impl<S: SystemInterface, G: Deref<Target = GlobalData<S>>> SmallAllocator<S, G> 
         let frame = common
             .available_frames
             .pop_with_refill(&common.global.available_frames, 1)?;
+        debug!("claiming frame {frame:?}");
         let vaddr = common.global.sys.vaddr(frame.start_address());
         unsafe {
             (*vaddr.as_ptr::<BumpFooter>()).count.store(1, Relaxed);

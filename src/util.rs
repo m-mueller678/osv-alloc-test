@@ -48,14 +48,14 @@ pub fn wrapping_less_than(a: usize, b: usize) -> bool {
 #[inline(always)]
 pub unsafe fn align_down(a: usize, b: usize) -> usize {
     unsafe_assert!(b.is_power_of_two());
-    a & (b - 1)
+    a & !(b - 1)
 }
 
 #[inline(always)]
 pub fn align_down_const<const ALIGN: usize>(a: usize) -> usize {
     let mask = const {
         assert!(ALIGN.is_power_of_two());
-        ALIGN - 1
+        !(ALIGN - 1)
     };
     a & mask
 }
