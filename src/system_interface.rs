@@ -1,9 +1,8 @@
+use log::warn;
 use std::{
     alloc::{Allocator, Layout},
     mem::MaybeUninit,
 };
-
-use tracing::warn;
 use x86_64::{
     registers::control::Cr3,
     structures::paging::{

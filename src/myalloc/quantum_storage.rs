@@ -4,10 +4,10 @@ use crate::{
     SystemInterface,
 };
 use buddy_bitmap::BuddyTower;
+use log::{error, warn};
 use rand::Rng;
 use std::sync::{atomic::Ordering::Relaxed, Mutex};
 use std::{ops::Range, sync::atomic::AtomicUsize};
-use tracing::{error, warn};
 
 pub struct QuantumStorage<S: SystemInterface> {
     quantum_base: AtomicUsize,

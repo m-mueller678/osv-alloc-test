@@ -18,7 +18,7 @@ static_assertions = "1.1.0"
 radium = {version = "1.1.1"}
 array-init = "2.1.0"
 next-gen={version = "0.1.1",default-features = false}
-tracing = {version = "0.1.40",features = ["release_max_level_warn"]}
+log = "0.4.28"
 itertools = "0.12.1"
 atom="0.4.0"
 buddy-bitmap = { path = "../buddy-bitmap" }
