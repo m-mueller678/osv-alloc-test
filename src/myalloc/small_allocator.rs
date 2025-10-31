@@ -5,7 +5,7 @@ use crate::{
     },
     GlobalData, SystemInterface,
 };
-use log::debug;
+use log::trace;
 use std::{
     alloc::Layout,
     marker::PhantomData,
@@ -57,13 +57,16 @@ impl<S: SystemInterface, G: Deref<Target = GlobalData<S>>> SmallAllocator<S, G> 
     pub fn alloc(&mut self, common: &mut LocalCommon<S, G>, layout: Layout) -> Option<NonNull<u8>> {
         unsafe_assert!(layout.size() > 0);
         unsafe_assert!(layout.size() <= PAGE_SIZE / 2);
+        let mut claimed = false;
         loop {
             let new_bump =
                 unsafe { align_down(self.bump.wrapping_sub(layout.size()), layout.align()) };
             let bump_limit = align_down_const::<PAGE_SIZE>(self.bump);
             if std::hint::unlikely(wrapping_less_than(new_bump, bump_limit)) {
+                unsafe_assert!(!claimed);
                 assert!(layout.align() <= PAGE_SIZE / 2);
                 self.claim_frame(common);
+                claimed = true;
                 continue;
             }
             self.bump = new_bump;
@@ -93,7 +96,7 @@ impl<S: SystemInterface, G: Deref<Target = GlobalData<S>>> SmallAllocator<S, G> 
         let vaddr = unsafe { vaddr_unchecked(page) };
         let paddr = common.global.sys.paddr(vaddr);
         let frame = unsafe { PhysFrame::from_start_address_unchecked(paddr) };
-        debug!("releasing frame {frame:?}");
+        trace!("releasing frame {frame:?}");
         unsafe { common.available_frames.push(frame).unwrap() };
         common
             .available_frames
@@ -105,12 +108,11 @@ impl<S: SystemInterface, G: Deref<Target = GlobalData<S>>> SmallAllocator<S, G> 
         let frame = common
             .available_frames
             .pop_with_refill(&common.global.available_frames, 1)?;
-        debug!("claiming frame {frame:?}");
+        trace!("claiming frame {frame:?}");
         let vaddr = common.global.sys.vaddr(frame.start_address());
-        unsafe {
-            (*vaddr.as_ptr::<BumpFooter>()).count.store(1, Relaxed);
-        }
-        self.bump = vaddr.as_u64() as usize + PAGE_SIZE;
+        let footer = find_footer(vaddr.as_u64() as usize);
+        unsafe { (*footer).count.store(1, Relaxed) };
+        self.bump = align_down_const::<64>(footer.addr());
         Some(())
     }
 }

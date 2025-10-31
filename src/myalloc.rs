@@ -99,8 +99,10 @@ unsafe impl<S: SystemInterface, G: Deref<Target = GlobalData<S>> + Send> TestAll
                 Some(NonNull::new_unchecked(layout.dangling().as_ptr()))
             }
         } else if std::hint::likely(layout.size() < MAX_MEDIUM_SIZE) {
+            panic!();
             self.medium.alloc(&mut self.common, layout)
         } else {
+            panic!();
             alloc_large(&mut self.common, layout)
         }
     }
