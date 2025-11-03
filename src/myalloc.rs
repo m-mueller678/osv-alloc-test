@@ -101,7 +101,6 @@ unsafe impl<S: SystemInterface, G: Deref<Target = GlobalData<S>> + Send> TestAll
         } else if std::hint::likely(layout.size() < MAX_MEDIUM_SIZE) {
             self.medium.alloc(&mut self.common, layout)
         } else {
-            panic!();
             alloc_large(&mut self.common, layout)
         }
     }

@@ -45,7 +45,7 @@ impl<S: SystemInterface> QuantumStorage<S> {
                 for &x in &*transfer_buffer {
                     let level = x >> QUANTUM_ID_BITS;
                     let quantum_id = x & QUANTUM_ID_MASK;
-                    self.released_quanta.insert(quantum_id as usize, level)
+                    self.available_quanta.insert(quantum_id as usize, level)
                 }
                 transfer_buffer.clear();
             };
@@ -54,7 +54,7 @@ impl<S: SystemInterface> QuantumStorage<S> {
             assert!(levels <= (1 << TRANSFER_BUFFER_LEVEL_BITS));
             for level in 0..levels {
                 for quantum in self.released_quanta.drain_level(level) {
-                    if tb.len() < tb.capacity() {
+                    if tb.len() == tb.capacity() {
                         warn!("transfer vector full!");
                         insert_transfer_vector(&mut tb);
                     }
@@ -74,13 +74,13 @@ impl<S: SystemInterface> QuantumStorage<S> {
     pub fn dealloc_clean(&self, level: u32, quantum: QuantumAddress) {
         let index = (quantum.start() - self.quantum_base.load(Relaxed)) / VIRTUAL_QUANTUM_SIZE;
         debug_assert!(index < 1 << 31);
-        self.available_quanta.insert(index, level)
+        self.available_quanta.insert(index, level);
     }
 
     pub fn dealloc_dirty(&self, level: u32, quantum: QuantumAddress) {
         let index = (quantum.start() - self.quantum_base.load(Relaxed)) / VIRTUAL_QUANTUM_SIZE;
         debug_assert!(index < 1 << 31);
-        self.released_quanta.insert(index, level)
+        self.released_quanta.insert(index, level);
     }
 
     pub fn from_range(sys: S, range: Range<QuantumAddress>) -> Self {
