@@ -41,7 +41,9 @@ impl<S: PageSize, Sys: SystemInterface, const C: usize> FrameList<S, Sys, C> {
         } else {
             let vaddr = self.sys.vaddr(f.start_address());
             unsafe_assert!(!vaddr.is_null());
-            self.head = Some(NonNull::new(vaddr.as_mut_ptr()).unwrap());
+            let mut head = NonNull::<ListFrame<S, Sys, C>>::new(vaddr.as_mut_ptr()).unwrap();
+            head.as_mut().count = 0;
+            self.head = Some(head);
         }
         Ok(())
     }
