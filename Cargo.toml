@@ -8,6 +8,7 @@ edition = "2021"
 [features]
 default=[]
 hash_map_debug =[]
+global_api_clib=[]
 
 [dependencies]
 libc = "0.2.153"
@@ -25,3 +26,9 @@ buddy-bitmap = { path = "../buddy-bitmap" }
 
 [profile.release]
 debug = 2
+
+
+[lib]
+crate-type = ["staticlib"]
+name= "virtual_alloc"
+

@@ -7,12 +7,16 @@
 #![feature(allocator_api)]
 #![feature(alloc_layout_extra)]
 #![feature(likely_unlikely)]
+#![feature(unsafe_cell_access)]
 
 mod frame_list;
 mod myalloc;
 mod quantum_address;
 mod system_interface;
 mod util;
+
+#[cfg(feature = "global_api_clib")]
+mod static_lib_global;
 
 use std::{alloc::Layout, ptr::NonNull};
 
