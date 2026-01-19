@@ -19,18 +19,20 @@ impl QuantumStorage {
             if let Some(x) = self.available_quanta.remove(level, rng) {
                 return Some(x);
             }
-            self.recycle();
+            self.recycle(level);
         }
         error!("failed to reclaim sufficient virtual memory");
         None
     }
 
-    fn recycle(&self) {
+    fn recycle(&self, level: u32) {
         if let Ok(mut tb) = self.transfer_buffer.try_lock() {
+            println!("recycling triggered: {level}");
             log_alloc(LogAllocMessage::Recycle as isize);
             self.available_quanta
                 .steal_all_and_flush(&self.released_quanta, &mut tb);
         } else {
+            println!("recycling back-off: {level}");
             log_alloc(LogAllocMessage::RecycleBackoff as isize);
             // recycling in progress, just wait for it to be done.
             drop(self.transfer_buffer.lock());
