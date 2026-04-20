@@ -1,3 +1,2 @@
-A memory allocator manipulating virtual emory mappings for better throughput.
-
-This is a reseradch prototype and likely full of bugs, do not use it for anything important.
+# BareHeap
+BareHeap is a research memory allocator manipulating virtual memory mappings for better throughput. This repository contains two branches: `hash-map-based` and `master`. These are two mostly separate allocator implementations, both based on the idea outlined in [our paper](https://www.cs.cit.tum.de/fileadmin/w00cfj/dis/papers/BareHeap-long.pdf). The version discussed in the paper is `hash-map-based`. The modified version of the spilly query engine used in our benchmarks is currently not public. BareHeap is not currently maintained and is not recommended for production use.
